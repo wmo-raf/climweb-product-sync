@@ -50,6 +50,10 @@ mkdir -p "$SRC/2026"
 printf 'PDF-A' > "$SRC/bulletin_01-08-2026.pdf"
 printf 'PDF-B' > "$SRC/2026/bulletin_03-08-2026.pdf"
 printf 'notes' > "$SRC/readme.txt"
+# A dotfile that matches the format. It sorts first, so it is what a naive
+# "first file found" test upload would pick — and the server rejects dotfiles.
+printf 'PDF-X' > "$SRC/.hidden.pdf"
+printf 'PDF-Y' > "$SRC/draft.pdf.tmp"
 
 # --- a copy of the wizard with its absolute paths redirected ----------------
 sed \
@@ -121,10 +125,22 @@ else
 fi
 
 # --- the test upload really happened ----------------------------------------
-if [ -f "$WATCH/weekly_rainfall/pdf/bulletin_01-08-2026.pdf" ]; then
+# Assert that a file arrived, not which one: the wizard sends the first file in
+# sorted order, and pinning the name here would make the test depend on the
+# sample data rather than on the behaviour.
+uploaded="$(find "$WATCH/weekly_rainfall/pdf" -type f -name '*.pdf' 2>/dev/null | wc -l)"
+if [ "$uploaded" -ge 1 ]; then
     ok "sends a real test file, into the derived path"
 else
-    no "sends a real test file" "$(find "$WATCH" -type f 2>/dev/null | head -3)"
+    no "sends a real test file" "nothing under $WATCH: $(find "$WATCH" -type f 2>/dev/null | head -3)"
+fi
+
+# The test upload must apply the same filtering as a normal run, or setup can
+# fail on a dotfile the real sync would never have sent.
+if find "$WATCH" -name '.hidden.pdf' 2>/dev/null | grep -q .; then
+    no "the test upload skips dotfiles, as a normal run does"
+else
+    ok "the test upload skips dotfiles, as a normal run does"
 fi
 
 expect_in "confirms success in plain language" "$WORK/out.txt" "publish automatically"

@@ -228,7 +228,10 @@ If your organisation uses a proxy, set https_proxy before running this."
             continue
         fi
 
-        file_count="$(find "$src_path" -type f -iname "*.${chosen_format}" 2>/dev/null | grep -c . || true)"
+        # Count what would actually be sent, not every matching filename: a
+        # count that includes half-written or hidden files would promise more
+        # than the sync delivers.
+        file_count="$(list_source_files "$src_path" "$chosen_format" "" | grep -c . || true)"
         if [ "$file_count" -eq 0 ]; then
             say_warn "No .${chosen_format} files found in $src_path"
             confirm "  Use it anyway?" && break
@@ -236,7 +239,7 @@ If your organisation uses a proxy, set https_proxy before running this."
         fi
 
         say_ok "Found $file_count .${chosen_format} file(s)"
-        find "$src_path" -type f -iname "*.${chosen_format}" 2>/dev/null \
+        list_source_files "$src_path" "$chosen_format" "" \
             | head -3 | while IFS= read -r f; do say_dim "      $(basename "$f")"; done
         break
     done
@@ -346,10 +349,13 @@ EOF
 climweb_sync_selftest() {
     local src="$1" fmt="$2" one rel
 
-    one="$(find "$src" -type f -iname "*.${fmt}" 2>/dev/null | head -1)"
-    [ -n "$one" ] || return 0   # nothing to send is not a failure
+    # Use the same selection the real sync uses, rather than a bare find. That
+    # keeps the test representative — it applies the tmp/part/dotfile filtering
+    # — and it is sorted, so the file chosen is the same on every machine.
+    rel="$(list_source_files "$src" "$fmt" "" | head -1)"
+    [ -n "$rel" ] || return 0   # nothing to send is not a failure
 
-    rel="${one#"$src"/}"
+    one="$src/$rel"
 
     local code
     code="$(curl --silent --show-error --location --max-time 120 \
