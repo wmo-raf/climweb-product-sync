@@ -9,10 +9,39 @@ sudo tail -50 /var/log/climweb-sync/sync.log
 
 ---
 
+## The setup command did not work
+
+**"That setup code was not accepted."**
+Codes last 48 hours and work once only. Generating a new code also cancels the
+previous one, so if two were sent, only the newer works. Ask the website
+administrator for a fresh code — it takes seconds.
+
+**"The product is not fully configured on the website yet."**
+Something is missing on the Product snippet. The **Automated Publishing** screen
+in the admin lists exactly which item, with a tick or a cross against each.
+
+**"This ClimWeb website does not support automated setup."**
+The site is running a version older than this feature. Set the sync up by hand
+instead — see [SETUP-rsync.md](SETUP-rsync.md).
+
+**"Could not reach ..."**
+This server has no route to the website. Check internet access and the address,
+and set `https_proxy` if your organisation uses a proxy.
+
+**"Could not download the tool from ..."**
+The server cannot reach GitHub. Ask your ClimWeb administrator for an offline
+copy of this repository, run `sudo ./install.sh --no-schedule` from it, then
+`sudo climweb-sync setup --server https://your-website YOUR-CODE`.
+
+---
+
 ## The files copied, but nothing appears on the website
 
 This is the most common problem, and it is almost always a mismatch between the
 config and the CMS. Work down this list in order.
+
+If setup was done with a setup code, skip straight to step 2 — the paths came
+from the website itself and cannot be wrong.
 
 **1. Is the destination path the one ClimWeb scans?**
 

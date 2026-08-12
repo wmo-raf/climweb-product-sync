@@ -23,6 +23,8 @@ LIB_DIR="$SCRIPT_DIR/lib"
 . "$LIB_DIR/transport_rsync.sh"
 # shellcheck source=lib/transport_https.sh
 . "$LIB_DIR/transport_https.sh"
+# shellcheck source=lib/setup.sh
+. "$LIB_DIR/setup.sh"
 
 # -----------------------------------------------------------------------------
 # Defaults, overridable by flags / environment
@@ -39,6 +41,12 @@ usage() {
 climweb-sync $VERSION — push met service products into ClimWeb's watch folder
 
 Usage: climweb-sync [options]
+       climweb-sync setup [--server URL] SETUP-CODE
+
+Setup:
+  Ask whoever manages your ClimWeb website to open the product, click
+  'Automated Publishing', and send you the command shown there. Running it
+  configures everything; you only have to say where your files are.
 
 Options:
   -c, --config FILE   Config file (default: \$CLIMWEB_SYNC_CONFIG, then
@@ -55,9 +63,50 @@ Exit codes:
   1  one or more products failed        3  could not reach the ClimWeb server
   4  another run is already in progress
 
-First-time setup: see docs/SETUP-rsync.md
+Setting up by hand instead: see docs/SETUP-rsync.md
 EOF
 }
+
+# -----------------------------------------------------------------------------
+# 'setup' subcommand — the guided path. Handled before the option parser, since
+# it takes its own arguments and writes the config the rest of this script reads.
+# -----------------------------------------------------------------------------
+if [ "${1:-}" = "setup" ]; then
+    shift
+    SETUP_SERVER=""
+    SETUP_CODE=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --server) SETUP_SERVER="${2:-}"; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            -*) die 2 "unknown option '$1' for setup" ;;
+            *) SETUP_CODE="$1"; shift ;;
+        esac
+    done
+
+    [ "$(id -u)" -eq 0 ] || die 2 "setup needs to run with sudo"
+
+    if [ -z "$SETUP_CODE" ]; then
+        ask SETUP_CODE "  Setup code: "
+    fi
+    [ -n "$SETUP_CODE" ] || die 2 "a setup code is required"
+
+    if [ -z "$SETUP_SERVER" ]; then
+        ask SETUP_SERVER "  Address of your ClimWeb website (e.g. cms.meteo.gov.ng): "
+    fi
+    [ -n "$SETUP_SERVER" ] || die 2 "the website address is required"
+
+    case "$SETUP_SERVER" in
+        https://*|http://*) ;;
+        *) SETUP_SERVER="https://$SETUP_SERVER" ;;
+    esac
+    SETUP_SERVER="${SETUP_SERVER%/}"
+
+    command -v curl >/dev/null 2>&1 || die 2 "curl is not installed (try: sudo apt install curl)"
+
+    run_setup "$SETUP_CODE" "$SETUP_SERVER"
+    exit $?
+fi
 
 while [ $# -gt 0 ]; do
     case "$1" in

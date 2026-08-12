@@ -36,10 +36,13 @@ https_check() {
     local -a curl_args
     mapfile -t curl_args < <(_curl_base)
 
+    # curl itself prints '000' on a failed connection, so appending another with
+    # '|| echo 000' would produce '000000' and fall through to the wrong branch.
     local code
     code="$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' \
         -H "Authorization: Bearer $token" \
-        "$CFG_CLIMWEB_BASE_URL/api/product-sync/ping/" 2>/dev/null || echo 000)"
+        "$CFG_CLIMWEB_BASE_URL/api/product-sync/ping/" 2>/dev/null)" || true
+    code="${code:-000}"
 
     case "$code" in
         200) log_debug "API reachable and token accepted" ;;
@@ -99,7 +102,8 @@ https_send() {
             -F "format=$fmt" \
             -F "relative_path=$rel" \
             -F "file=@$abs" \
-            "$endpoint" 2>/dev/null || echo 000)"
+            "$endpoint" 2>/dev/null)" || true
+        code="${code:-000}"
 
         case "$code" in
             200|201)

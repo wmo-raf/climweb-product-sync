@@ -1,23 +1,44 @@
-# Server API specification (for the `https` transport)
+# Server API reference (for the `https` transport)
 
-> **Status: not part of ClimWeb yet.**
->
-> The `rsync` transport works against any ClimWeb installation today and needs
-> no server-side code. The `https` transport described here requires an upload
-> endpoint that ClimWeb does not currently ship. This document specifies what
-> `climweb-sync` sends, so the endpoint can be implemented in ClimWeb and the
-> two sides agree from the start.
->
-> Until it exists, `climweb-sync --check` will fail with a clear message telling
-> the operator to use `transport: rsync`.
-
-## Why it would be worth having
-
-Some national met services sit behind networks that permit outbound HTTPS and
-nothing else. For them, SSH-based sync is not an option, and the alternative is
-a manual upload by a person every day.
+> **Requires a ClimWeb version with the product-sync API.** Against an older
+> site, `climweb-sync --check` fails with a message telling the operator to use
+> `transport: rsync` instead, which needs no server-side support at all.
 
 ## Endpoints
+
+### `GET /api/product-sync/setup.sh`
+
+The bootstrap script behind the one-line command shown in the CMS. Downloads
+this tool and hands over to `climweb-sync setup`. Unauthenticated — it contains
+no secrets, and refuses to run without a setup code.
+
+### `POST /api/product-sync/setup/exchange/`
+
+Trades a one-time setup code for a credential and the product's settings.
+
+Unauthenticated by design: possession of the code *is* the credential. That is
+acceptable because a code is single-use, expires in 48 hours, is scoped to one
+product, and grants only the ability to upload files of one format into one
+folder.
+
+| Field | Description |
+|---|---|
+| `code` | The setup code. Case and dashes are normalised, so `k7fa2c9dtx43` works. |
+| `hostname` | Reported by the client; shown in the CMS so an administrator can tell servers apart. |
+| `format` | `env` to get shell assignments instead of JSON. |
+
+Returns `product_name`, `variable_name`, `formats`, `format`, `watch_root`,
+`base_url`, `ingestion_enabled` and `token`.
+
+| Response | Meaning |
+|---|---|
+| `200` | Accepted; the code is now spent |
+| `403` | Unknown, expired, or already-used code |
+| `409` | The product is missing a variable name or a format in the CMS |
+
+The `format=env` variant exists because the client is a bash script on a met
+service server that may not have `jq` installed. Values are single-quoted with
+embedded quotes escaped, so the response can be sourced directly.
 
 ### `GET /api/product-sync/ping/`
 
@@ -59,9 +80,12 @@ Authorization: Bearer <token>
 | `401` / `403` | Authentication failure |
 | `413` | File exceeds the server's upload limit |
 
-## Server-side requirements
+## Server-side invariants
 
-**Resolve the destination the same way the ingester does.** The file must be
+These are the properties the ClimWeb implementation upholds. They are recorded
+here because they are the parts that must not regress.
+
+**Resolve the destination the same way the ingester does.** The file is
 written to:
 
 ```
@@ -104,11 +128,12 @@ timing out.
   force a full re-upload.
 - Failures are logged per file; the run continues and exits `1` at the end.
 
-## Suggested implementation notes
+## Implementation notes
 
-A Wagtail/Django implementation would sit naturally alongside
-`climweb/pages/products/`, reusing `Product` and `ProductCategory` for
-validation. It should *not* trigger ingestion inline — let the existing periodic
-`ingest_product_files` task pick the files up, so both transports converge on
+The ClimWeb implementation lives in `climweb/pages/products/sync_api.py` and
+`sync_models.py`, reusing `Product` and `ProductCategory` for validation.
+
+Uploading does *not* trigger ingestion inline — the existing periodic
+`ingest_product_files` task picks the files up, so both transports converge on
 exactly the same code path and there is only one ingestion behaviour to reason
 about.

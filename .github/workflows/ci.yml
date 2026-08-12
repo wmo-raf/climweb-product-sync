@@ -13,7 +13,7 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint
-        run: shellcheck -x climweb-sync install.sh lib/*.sh tests/run-tests.sh
+        run: shellcheck -x climweb-sync install.sh lib/*.sh tests/*.sh
 
   tests:
     runs-on: ubuntu-latest
@@ -21,8 +21,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y rsync
-      - name: Run tests
+      - name: Transport and config tests
         run: ./tests/run-tests.sh
+      - name: Setup wizard tests
+        run: ./tests/test-setup.sh
 
   install:
     runs-on: ubuntu-latest
