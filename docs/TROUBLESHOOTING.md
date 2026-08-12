@@ -9,6 +9,32 @@ sudo tail -50 /var/log/climweb-sync/sync.log
 
 ---
 
+## Only some of the product appears on the website
+
+A product can be published in several formats — PDF and PNG, say — and each is
+synced separately. If the PDFs appear but the PNGs do not, that format was
+probably skipped during setup.
+
+Check what is configured:
+
+```bash
+sudo climweb-sync --check
+```
+
+It prints one line per format. If a format is missing, add it to
+`/etc/climweb-sync/config.yaml` by copying the last block under `products:` and
+changing `format:` and `src_path:`:
+
+```yaml
+  - variable_name: weekly_rainfall
+    format: png
+    src_path: /home/met/data/wkrainfall
+```
+
+Then `sudo climweb-sync --check` to confirm, and `sudo climweb-sync -v` to send.
+
+---
+
 ## The setup command did not work
 
 **"That setup code was not accepted."**

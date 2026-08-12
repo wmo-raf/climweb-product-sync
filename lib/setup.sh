@@ -71,6 +71,105 @@ suggest_source_dirs() {
     done | head -8
 }
 
+# Ask where the files for one format live.
+#
+# Sets PROMPT_PATH to the folder, or to "" when the operator chooses to skip.
+#   _prompt_source_folder FORMAT PREVIOUS_PATH required|skippable
+PROMPT_PATH=""
+_prompt_source_folder() {
+    local fmt="$1" previous="$2" mode="$3"
+    local suggestions src_path file_count n s count
+
+    PROMPT_PATH=""
+
+    say
+    rule
+    say_bold "  Where are the ${fmt} files on this server?"
+    say
+
+    # Products published in several formats are usually written to one folder,
+    # so offer the previous answer instead of making someone type it twice.
+    if [ -n "$previous" ]; then
+        count="$(list_source_files "$previous" "$fmt" "" | grep -c . || true)"
+        if [ "$count" -gt 0 ]; then
+            say_dim "  The folder you gave for the previous format also holds"
+            say_dim "  $count .${fmt} file(s):"
+            say "      $previous"
+            say
+            if confirm "  Use that folder for ${fmt} as well?"; then
+                say_ok "Found $count .${fmt} file(s)"
+                PROMPT_PATH="$previous"
+                return 0
+            fi
+            say
+        fi
+    fi
+
+    suggestions="$(suggest_source_dirs "$fmt")"
+    if [ -n "$suggestions" ]; then
+        say_dim "  Folders on this server that contain .${fmt} files:"
+        n=1
+        while IFS= read -r s; do
+            say "    $n) $s"
+            n=$((n + 1))
+        done <<< "$suggestions"
+        say_dim "  Type a number, or the full path to a different folder."
+        say
+    fi
+
+    if [ "$mode" = "skippable" ]; then
+        say_dim "  Leave blank if ${fmt} files are not produced on this server."
+        say
+    fi
+
+    while true; do
+        ask src_path "  Folder: "
+        src_path="${src_path%/}"
+
+        # Allow picking a suggestion by number.
+        if [ -n "$suggestions" ] && [[ "$src_path" =~ ^[0-9]+$ ]]; then
+            src_path="$(sed -n "${src_path}p" <<< "$suggestions")"
+            src_path="${src_path%/}"
+        fi
+
+        if [ -z "$src_path" ]; then
+            if [ "$mode" = "skippable" ]; then
+                PROMPT_PATH=""
+                return 0
+            fi
+            say_bad "Please enter a folder path."
+            continue
+        fi
+        case "$src_path" in
+            /*) ;;
+            *) say_bad "Please give the full path, starting with /"; continue ;;
+        esac
+        if [ ! -d "$src_path" ]; then
+            say_bad "There is no folder at $src_path"
+            continue
+        fi
+
+        # Count what would actually be sent, not every matching filename: a
+        # count that includes half-written or hidden files would promise more
+        # than the sync delivers.
+        file_count="$(list_source_files "$src_path" "$fmt" "" | grep -c . || true)"
+        if [ "$file_count" -eq 0 ]; then
+            say_warn "No .${fmt} files found in $src_path"
+            if confirm "  Use it anyway?"; then
+                PROMPT_PATH="$src_path"
+                return 0
+            fi
+            continue
+        fi
+
+        say_ok "Found $file_count .${fmt} file(s)"
+        list_source_files "$src_path" "$fmt" "" \
+            | head -3 | while IFS= read -r f; do say_dim "      $(basename "$f")"; done
+        PROMPT_PATH="$src_path"
+        return 0
+    done
+}
+
 # --- the wizard ---------------------------------------------------------------
 run_setup() {
     local code="$1" server="$2"
@@ -164,87 +263,55 @@ If your organisation uses a proxy, set https_proxy before running this."
         say_dim "      the administrator ticks 'Enable Auto-Ingestion'."
     fi
 
-    # -- 2. which format, if there are several --------------------------------
-    local chosen_format="$FORMAT"
-    if [ "${FORMATS}" != "${FORMAT}" ] && [ -n "$FORMATS" ]; then
-        local -a fmt_list
-        IFS=',' read -r -a fmt_list <<< "$FORMATS"
-        if [ "${#fmt_list[@]}" -gt 1 ]; then
-            say
-            say_bold "  This product is published in several formats."
-            local idx=1 f
-            for f in "${fmt_list[@]}"; do
-                say "    $idx) $f"
-                idx=$((idx + 1))
-            done
-            local pick
-            ask pick "  Which are you sending from this server? [1] "
-            pick="${pick:-1}"
-            chosen_format="${fmt_list[$((pick - 1))]:-${fmt_list[0]}}"
-            chosen_format="$(printf '%s' "$chosen_format" | tr -d '[:space:]')"
-        fi
-    fi
-
-    # -- 3. the one real question ---------------------------------------------
-    say
-    rule
-    say_bold "  Where are the ${chosen_format} files on this server?"
-    say
-
-    local suggestions
-    suggestions="$(suggest_source_dirs "$chosen_format")"
-    if [ -n "$suggestions" ]; then
-        say_dim "  Folders on this server that contain .${chosen_format} files:"
-        local n=1 s
-        while IFS= read -r s; do
-            say "    $n) $s"
-            n=$((n + 1))
-        done <<< "$suggestions"
-        say_dim "  Type a number, or the full path to a different folder."
-        say
-    fi
-
-    local src_path="" file_count=0
-    while true; do
-        ask src_path "  Folder: "
-        src_path="${src_path%/}"
-
-        # Allow picking a suggestion by number.
-        if [ -n "$suggestions" ] && [[ "$src_path" =~ ^[0-9]+$ ]]; then
-            src_path="$(sed -n "${src_path}p" <<< "$suggestions")"
-            src_path="${src_path%/}"
-        fi
-
-        if [ -z "$src_path" ]; then
-            say_bad "Please enter a folder path."
-            continue
-        fi
-        case "$src_path" in
-            /*) ;;
-            *) say_bad "Please give the full path, starting with /"; continue ;;
-        esac
-        if [ ! -d "$src_path" ]; then
-            say_bad "There is no folder at $src_path"
-            continue
-        fi
-
-        # Count what would actually be sent, not every matching filename: a
-        # count that includes half-written or hidden files would promise more
-        # than the sync delivers.
-        file_count="$(list_source_files "$src_path" "$chosen_format" "" | grep -c . || true)"
-        if [ "$file_count" -eq 0 ]; then
-            say_warn "No .${chosen_format} files found in $src_path"
-            confirm "  Use it anyway?" && break
-            continue
-        fi
-
-        say_ok "Found $file_count .${chosen_format} file(s)"
-        list_source_files "$src_path" "$chosen_format" "" \
-            | head -3 | while IFS= read -r f; do say_dim "      $(basename "$f")"; done
-        break
+    # -- 2. work through every format the product publishes -------------------
+    #
+    # A product configured with both pdf and png needs both synced, or half of
+    # it silently never appears on the website. So every format gets asked
+    # about; the operator can skip any that are not produced on this server.
+    local -a fmt_list=()
+    local raw_fmt
+    IFS=',' read -r -a fmt_list <<< "${FORMATS:-$FORMAT}"
+    for i in "${!fmt_list[@]}"; do
+        raw_fmt="$(printf '%s' "${fmt_list[$i]}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+        fmt_list[$i]="$raw_fmt"
     done
 
-    # -- 4. how often ---------------------------------------------------------
+    local -a chosen_formats=() chosen_paths=()
+    local fmt last_path=""
+
+    if [ "${#fmt_list[@]}" -gt 1 ]; then
+        say
+        say_bold "  This product is published in ${#fmt_list[@]} formats: ${FORMATS//,/, }"
+        say_dim "      Each one is set up in turn. You can skip any that are not"
+        say_dim "      produced on this server."
+    fi
+
+    for fmt in "${fmt_list[@]}"; do
+        [ -n "$fmt" ] || continue
+
+        # Only offer skipping when there is more than one format — skipping the
+        # only format would leave nothing to do.
+        if [ "${#fmt_list[@]}" -gt 1 ]; then
+            _prompt_source_folder "$fmt" "$last_path" skippable
+        else
+            _prompt_source_folder "$fmt" "$last_path" required
+        fi
+
+        if [ -n "$PROMPT_PATH" ]; then
+            chosen_formats+=("$fmt")
+            chosen_paths+=("$PROMPT_PATH")
+            last_path="$PROMPT_PATH"
+        else
+            say_dim "      Skipping ${fmt} — it will not be published from this server."
+        fi
+    done
+
+    if [ "${#chosen_formats[@]}" -eq 0 ]; then
+        setup_die "Nothing was set up, because every format was skipped." \
+"Run the command again once you know which folders hold the files."
+    fi
+
+    # -- 3. how often ---------------------------------------------------------
     say
     rule
     say_bold "  How often are new files produced?"
@@ -279,7 +346,7 @@ If your organisation uses a proxy, set https_proxy before running this."
 # Product: $PRODUCT_NAME
 #
 # You can edit this file, then run 'climweb-sync --check' to confirm it is
-# still valid. To add another product, copy the block under 'products:'.
+# still valid. To add another product, copy the last block under 'products:'.
 
 climweb:
   transport: https
@@ -292,22 +359,38 @@ defaults:
   max_age_days: 30
 
 products:
-  - variable_name: $VARIABLE_NAME
-    format: $chosen_format
-    src_path: $src_path
 EOF
+
+    local idx
+    for idx in "${!chosen_formats[@]}"; do
+        cat >> /etc/climweb-sync/config.yaml <<EOF
+  - variable_name: $VARIABLE_NAME
+    format: ${chosen_formats[$idx]}
+    src_path: ${chosen_paths[$idx]}
+EOF
+    done
+
     chmod 640 /etc/climweb-sync/config.yaml
-    say_ok "Configuration saved"
+    say_ok "Configuration saved (${#chosen_formats[@]} format(s))"
 
     # -- 6. prove it works ----------------------------------------------------
-    printf '  Sending a test file ... '
-    if climweb_sync_selftest "$src_path" "$chosen_format"; then
-        printf '%sOK%s\n' "$C_GREEN" "$C_OFF"
-    else
-        printf '%sfailed%s\n' "$C_RED" "$C_OFF"
+    # Every format is tested, not just the first: a permissions or naming
+    # problem can easily affect one folder and not another.
+    local test_failures=0
+    for idx in "${!chosen_formats[@]}"; do
+        printf '  Sending a test %s file ... ' "${chosen_formats[$idx]}"
+        if climweb_sync_selftest "${chosen_paths[$idx]}" "${chosen_formats[$idx]}"; then
+            printf '%sOK%s\n' "$C_GREEN" "$C_OFF"
+        else
+            printf '%sfailed%s\n' "$C_RED" "$C_OFF"
+            test_failures=$((test_failures + 1))
+        fi
+    done
+
+    if [ "$test_failures" -gt 0 ]; then
         say
-        say_dim "  The settings were saved, but the test upload did not succeed."
-        say_dim "  Run this to see the details:"
+        say_dim "  The settings were saved, but $test_failures test upload(s) did not"
+        say_dim "  succeed. Run this to see the details:"
         say_dim "      sudo climweb-sync --verbose"
         say
         return 1
@@ -333,8 +416,29 @@ EOF
     say
     say_bold "  Done. $PRODUCT_NAME will publish automatically from now on."
     say
-    say_dim "  New files placed in $src_path will appear on the website"
-    say_dim "  within the hour. Nothing else needs to be done."
+    say_dim "  New files placed in these folders appear on the website within"
+    say_dim "  the hour. Nothing else needs to be done."
+    say
+    for idx in "${!chosen_formats[@]}"; do
+        say_dim "      ${chosen_formats[$idx]}  ${chosen_paths[$idx]}"
+    done
+
+    # Naming a skipped format here is worth the extra line: it is the one thing
+    # that will otherwise be noticed months later, as a product that only ever
+    # publishes half its files.
+    local f listed
+    for f in "${fmt_list[@]}"; do
+        listed=0
+        for idx in "${!chosen_formats[@]}"; do
+            [ "${chosen_formats[$idx]}" = "$f" ] && listed=1
+        done
+        if [ "$listed" -eq 0 ] && [ -n "$f" ]; then
+            say
+            say_warn "${f} was skipped, so those files will not be published"
+            say_dim "      from this server. Run setup again with a new code if"
+            say_dim "      that was not intended."
+        fi
+    done
     say
     say_dim "  If you ever need it:"
     say_dim "    sudo climweb-sync            run now, without waiting"

@@ -68,6 +68,12 @@ You need `sudo` on that server.
 It asks you one question: which folder the files are in. Everything else —
 which product this is, what format, where the files go — comes from the website.
 
+If the product is published in several formats, you are asked once per format.
+Where the files sit together in one folder, the wizard offers to reuse your
+previous answer. If a format is not produced on this server, leave the answer
+blank to skip it; the summary at the end names anything skipped, so nothing is
+quietly left unpublished.
+
 If it cannot reach GitHub to download the tool, ask your ClimWeb administrator
 for an offline copy and run `./install.sh` from it, then:
 

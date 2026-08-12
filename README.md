@@ -69,6 +69,38 @@ question — which folder the files are in — and sets up everything else itsel
 Nothing is transcribed, so nothing can be mistyped. The variable name, file
 format and destination all come from the website itself.
 
+### Products published in more than one format
+
+If the product is set up in the CMS with several formats — say PDF and PNG —
+the wizard asks about each one in turn, so no part of the product is left
+unpublished:
+
+```
+  This product is published in 2 formats: pdf, png
+      Each one is set up in turn. You can skip any that are not
+      produced on this server.
+
+  Where are the pdf files on this server?
+  Folder: /home/met/data/wkrainfall
+  ✓ Found 14 .pdf file(s)
+
+  Where are the png files on this server?
+  The folder you gave for the previous format also holds
+  14 .png file(s):
+      /home/met/data/wkrainfall
+
+  Use that folder for png as well? [y/N] y
+  ✓ Found 14 .png file(s)
+```
+
+If a format is produced somewhere else, give a different folder. If it is not
+produced on this server at all, leave the answer blank to skip it — the wizard
+says plainly which formats were skipped, so a half-configured product is
+obvious at the time rather than six months later.
+
+Each format becomes its own entry under `products:`, and each is tested with a
+real upload before setup reports success.
+
 ### If the setup code does not work
 
 Codes expire after 48 hours and can only be used once. Ask for a new one — it

@@ -193,6 +193,72 @@ rm -f "$SHIM_DIR/used_codes"
 printf '%s\n1\n' "$SRC" | SHIM_DOWN=1 "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/down.txt" 2>&1
 expect_in "an unreachable server gives an actionable message" "$WORK/down.txt" "Could not reach" "$(tail -3 "$WORK/down.txt")"
 
+# --- a product published in more than one format ----------------------------
+# Both formats must be set up. Configuring only one is the failure this whole
+# design exists to prevent: half the product silently never publishes.
+setup_multiformat() { # setup_multiformat ANSWERS...
+    rm -f "$SHIM_DIR/used_codes"
+    rm -rf "$FAKE_ROOT/etc/climweb-sync"
+    printf '%b' "$1" | SHIM_FORMATS="pdf,png" "$WORK/run.sh" "$VALID_CODE" "https://cms.test"
+}
+
+MSRC="$WORK/data/both"
+mkdir -p "$MSRC"
+printf 'PDF' > "$MSRC/bulletin_01-08-2026.pdf"
+printf 'PNG' > "$MSRC/bulletin_01-08-2026.png"
+
+# Both formats in one folder: the wizard should offer to reuse it.
+setup_multiformat "$MSRC\ny\n1\n" >"$WORK/multi.txt" 2>&1
+check "multi-format setup completes" "0" "$?"
+
+MCONF="$FAKE_ROOT/etc/climweb-sync/config.yaml"
+check "writes one entry per format" "2" "$(grep -c 'variable_name:' "$MCONF" 2>/dev/null || echo 0)"
+expect_in "keeps the pdf entry" "$MCONF" "format: pdf"
+expect_in "keeps the png entry" "$MCONF" "format: png"
+expect_in "offers to reuse the folder for the second format" "$WORK/multi.txt" "as well?"
+expect_in "announces how many formats it configured" "$WORK/multi.txt" "2 format"
+
+CLIMWEB_SYNC_STATE_DIR="$WORK/state4" "$REPO/climweb-sync" -c "$MCONF" --check >/dev/null 2>&1
+check "the multi-format config passes --check" "0" "$?"
+
+if [ -f "$WATCH/weekly_rainfall/png/bulletin_01-08-2026.png" ]; then
+    ok "tests the second format too, not just the first"
+else
+    no "tests the second format too" "$(find "$WATCH/weekly_rainfall" -type f 2>/dev/null | head -4)"
+fi
+
+# Separate folders per format.
+PSRC="$WORK/data/pngonly"
+mkdir -p "$PSRC"
+printf 'PNG2' > "$PSRC/bulletin_02-08-2026.png"
+PDFSRC="$WORK/data/pdfonly"
+mkdir -p "$PDFSRC"
+printf 'PDF2' > "$PDFSRC/bulletin_02-08-2026.pdf"
+
+setup_multiformat "$PDFSRC\n$PSRC\n1\n" >"$WORK/multi2.txt" 2>&1
+check "accepts a different folder per format" "0" "$?"
+expect_in "records the pdf folder" "$MCONF" "src_path: $PDFSRC"
+expect_in "records the png folder" "$MCONF" "src_path: $PSRC"
+
+# Skipping a format that is not produced on this server.
+setup_multiformat "$PDFSRC\n\n1\n" >"$WORK/multi3.txt" 2>&1
+check "a format can be skipped" "0" "$?"
+check "only the format that was kept is written" "1" "$(grep -c 'variable_name:' "$MCONF" 2>/dev/null || echo 0)"
+expect_in "warns clearly that the skipped format will not publish" \
+    "$WORK/multi3.txt" "png was skipped" "$(tail -6 "$WORK/multi3.txt")"
+
+# Skipping every format leaves nothing to do, and must not write a config.
+setup_multiformat "\n\n" >"$WORK/multi4.txt" 2>&1
+if [ -f "$MCONF" ]; then
+    no "skipping every format writes no config" "a config was written anyway"
+else
+    ok "skipping every format writes no config"
+fi
+expect_in "explains that nothing was set up" "$WORK/multi4.txt" "every format was skipped"
+
+# Restore single-format state for any later assertions.
+rm -f "$SHIM_DIR/used_codes"
+
 # --- the operator gives a folder with nothing in it -------------------------
 rm -f "$SHIM_DIR/used_codes"
 EMPTY="$WORK/empty"; mkdir -p "$EMPTY"

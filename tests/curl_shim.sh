@@ -12,6 +12,7 @@
 #   SHIM_DIR        scratch directory for state
 #   SHIM_WATCH      where "uploaded" files are written
 #   SHIM_VALID_CODE the setup code that is accepted
+#   SHIM_FORMATS    comma-separated formats the product publishes
 #   SHIM_DOWN=1     simulate a server that cannot be reached
 
 set -uo pipefail
@@ -20,6 +21,7 @@ set -uo pipefail
 SHIM_DIR="${SHIM_DIR:-/tmp}"
 SHIM_WATCH="${SHIM_WATCH:-/tmp/shim-watch}"
 SHIM_VALID_CODE="${SHIM_VALID_CODE:-}"
+SHIM_FORMATS="${SHIM_FORMATS:-pdf}"
 SHIM_DOWN="${SHIM_DOWN:-0}"
 
 out_file=""
@@ -92,8 +94,8 @@ if [[ "$url" == *"/setup/exchange/"* ]]; then
     printf '%s\n' "$normalised" >> "$state"
     emit 200 "PRODUCT_NAME='Weekly Rainfall'
 VARIABLE_NAME='weekly_rainfall'
-FORMATS='pdf'
-FORMAT='pdf'
+FORMATS='${SHIM_FORMATS}'
+FORMAT='${SHIM_FORMATS%%,*}'
 INGESTION_ENABLED='true'
 WATCH_ROOT='${SHIM_WATCH}'
 BASE_URL='https://cms.test'
@@ -125,7 +127,10 @@ if [[ "$url" == *"/upload/"* ]]; then
     rel="${form[relative_path]:-}"
 
     [ "$variable_name" = "weekly_rainfall" ] || { emit 400 '{"error":"wrong_product"}'; exit 0; }
-    [ "$fmt" = "pdf" ] || { emit 400 '{"error":"bad_format"}'; exit 0; }
+    case ",$SHIM_FORMATS," in
+        *",$fmt,"*) ;;
+        *) emit 400 '{"error":"bad_format"}'; exit 0 ;;
+    esac
 
     # Mirror the server's containment rule, so the test would catch a client
     # that started sending traversal paths.
