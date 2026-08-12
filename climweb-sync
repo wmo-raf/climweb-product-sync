@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+#
+# climweb-sync — copy generated products from a national met service server to
+# the folder ClimWeb watches for automatic ingestion.
+#
+# Run it from cron or a systemd timer. It is safe to run often: nothing is
+# re-sent unless it changed, and concurrent runs are locked out.
+#
+# https://github.com/wmo-raf/climweb-product-sync
+
+set -euo pipefail
+
+VERSION="1.0.0"
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+LIB_DIR="$SCRIPT_DIR/lib"
+[ -d "$LIB_DIR" ] || LIB_DIR="$SCRIPT_DIR/../lib/climweb-sync"
+
+# shellcheck source=lib/common.sh
+. "$LIB_DIR/common.sh"
+# shellcheck source=lib/transport_rsync.sh
+. "$LIB_DIR/transport_rsync.sh"
+# shellcheck source=lib/transport_https.sh
+. "$LIB_DIR/transport_https.sh"
+
+# -----------------------------------------------------------------------------
+# Defaults, overridable by flags / environment
+# -----------------------------------------------------------------------------
+CONFIG="${CLIMWEB_SYNC_CONFIG:-}"
+STATE_DIR="${CLIMWEB_SYNC_STATE_DIR:-/var/lib/climweb-sync}"
+DRY_RUN=0
+CHECK_ONLY=0
+ONLY_PRODUCT=""
+VERBOSE=0
+
+usage() {
+    cat <<EOF
+climweb-sync $VERSION — push met service products into ClimWeb's watch folder
+
+Usage: climweb-sync [options]
+
+Options:
+  -c, --config FILE   Config file (default: \$CLIMWEB_SYNC_CONFIG, then
+                      /etc/climweb-sync/config.yaml, then ./config.yaml)
+  -n, --dry-run       Show exactly what would be transferred, send nothing
+      --check         Validate the config and test the connection, then exit
+      --only NAME     Only sync products whose variable_name is NAME
+  -v, --verbose       List every file transferred
+  -V, --version       Print version and exit
+  -h, --help          Show this help
+
+Exit codes:
+  0  success            2  configuration error
+  1  one or more products failed        3  could not reach the ClimWeb server
+  4  another run is already in progress
+
+First-time setup: see docs/SETUP-rsync.md
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -c|--config)  CONFIG="${2:-}"; shift 2 ;;
+        -n|--dry-run) DRY_RUN=1; shift ;;
+        --check)      CHECK_ONLY=1; shift ;;
+        --only)       ONLY_PRODUCT="${2:-}"; shift 2 ;;
+        -v|--verbose) VERBOSE=1; shift ;;
+        -V|--version) echo "climweb-sync $VERSION"; exit 0 ;;
+        -h|--help)    usage; exit 0 ;;
+        *) die 2 "unknown option '$1' (try --help)" ;;
+    esac
+done
+
+# -----------------------------------------------------------------------------
+# Locate and load the config
+# -----------------------------------------------------------------------------
+if [ -z "$CONFIG" ]; then
+    for candidate in /etc/climweb-sync/config.yaml ./config.yaml; do
+        if [ -f "$candidate" ]; then CONFIG="$candidate"; break; fi
+    done
+fi
+[ -n "$CONFIG" ] || die 2 "no config file found. Copy config.example.yaml to /etc/climweb-sync/config.yaml"
+[ -f "$CONFIG" ] || die 2 "config file not found: $CONFIG"
+
+config_load "$CONFIG"
+config_validate
+
+# -----------------------------------------------------------------------------
+# Only one run at a time — a slow first sync must not overlap the next cron tick
+# -----------------------------------------------------------------------------
+acquire_lock
+
+log_info "climweb-sync $VERSION starting (config: $CONFIG, transport: $CFG_CLIMWEB_TRANSPORT)"
+[ "$DRY_RUN" -eq 1 ] && log_info "DRY RUN — no files will be transferred"
+
+case "$CFG_CLIMWEB_TRANSPORT" in
+    rsync) transport_check=rsync_check;  transport_send=rsync_send  ;;
+    https) transport_check=https_check;  transport_send=https_send  ;;
+    *)     die 2 "unknown transport '$CFG_CLIMWEB_TRANSPORT' (expected rsync or https)" ;;
+esac
+
+"$transport_check"
+
+# -----------------------------------------------------------------------------
+# --check: report the resolved plan without moving anything
+# -----------------------------------------------------------------------------
+if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo
+    echo "Configuration is valid. ClimWeb will be given these paths:"
+    echo
+    for i in $(seq 1 "$CFG_PRODUCT_COUNT"); do
+        product_load "$i" || continue
+        printf '  %-24s %s\n' "$P_VARIABLE_NAME" "$P_SRC_PATH"
+        printf '  %-24s   -> %s\n' "" "$(dest_path_for "$P_VARIABLE_NAME" "$P_FORMAT")"
+        count=$(count_source_files "$P_SRC_PATH" "$P_FORMAT" "$P_MAX_AGE_DAYS")
+        printf '  %-24s   %s matching .%s file(s) in the last %s day(s)\n\n' \
+            "" "$count" "$P_FORMAT" "${P_MAX_AGE_DAYS:-all}"
+    done
+    echo "Reminder: 'variable_name' and 'format' must match the Product snippet"
+    echo "in the ClimWeb admin exactly, or the files will land where nothing"
+    echo "is looking for them."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Sync each product
+# -----------------------------------------------------------------------------
+mkdir -p "$STATE_DIR" 2>/dev/null || STATE_DIR="${TMPDIR:-/tmp}/climweb-sync-state"
+mkdir -p "$STATE_DIR"
+
+failures=0
+synced=0
+skipped=0
+
+for i in $(seq 1 "$CFG_PRODUCT_COUNT"); do
+    if ! product_load "$i"; then
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    if [ -n "$ONLY_PRODUCT" ] && [ "$P_VARIABLE_NAME" != "$ONLY_PRODUCT" ]; then
+        continue
+    fi
+
+    if [ ! -d "$P_SRC_PATH" ]; then
+        log_error "$P_VARIABLE_NAME: source directory does not exist: $P_SRC_PATH"
+        failures=$((failures + 1))
+        continue
+    fi
+
+    dest="$(dest_path_for "$P_VARIABLE_NAME" "$P_FORMAT")"
+    log_info "$P_VARIABLE_NAME (.$P_FORMAT): $P_SRC_PATH -> $dest"
+
+    if "$transport_send" "$P_VARIABLE_NAME" "$P_FORMAT" "$P_SRC_PATH" "$dest" \
+                         "$P_MAX_AGE_DAYS" "$P_DELETE_REMOTE"; then
+        synced=$((synced + 1))
+    else
+        log_error "$P_VARIABLE_NAME: transfer failed"
+        failures=$((failures + 1))
+    fi
+done
+
+log_info "done: $synced product(s) synced, $skipped disabled, $failures failed"
+
+if [ "$failures" -gt 0 ]; then
+    exit 1
+fi
+exit 0

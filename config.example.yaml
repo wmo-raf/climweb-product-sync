@@ -1,0 +1,118 @@
+# =============================================================================
+#  climweb-sync configuration
+# =============================================================================
+#  Copy this file to /etc/climweb-sync/config.yaml and edit the marked values.
+#  Validate it at any time with:   climweb-sync --check
+#
+#  Formatting rules (the parser is strict on purpose):
+#    * indent with spaces, never tabs
+#    * one "key: value" per line, no nested blocks
+#    * '#' starts a comment, so avoid '#' inside paths
+#    * unknown keys are an error, not a warning — so typos get caught early
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+#  Where the files are going
+# -----------------------------------------------------------------------------
+climweb:
+
+  # How to move the files. Two options:
+  #   rsync  — push over SSH. Efficient and resumable. Needs an SSH key on the
+  #            ClimWeb server. This is the recommended default.
+  #   https  — POST each file to the ClimWeb upload API with a token. Use this
+  #            when your network or hosting provider does not allow outbound
+  #            SSH. See docs/SETUP-https.md — it requires an API endpoint that
+  #            your ClimWeb version may not ship yet.
+  transport: rsync
+
+  # --- rsync transport settings ---------------------------------------------
+
+  # Hostname or IP of the ClimWeb server.
+  host: cms.meteo.example.org
+
+  # The dedicated, unprivileged account created for syncing on the ClimWeb
+  # server. Do NOT use root. See docs/SETUP-rsync.md.
+  user: climweb-sync
+
+  # SSH port, if it is not 22.
+  port: 22
+
+  # Private key on THIS server, used to authenticate to the ClimWeb server.
+  # Must be readable only by the user running the cron job (chmod 600).
+  ssh_key: /etc/climweb-sync/id_ed25519
+
+  # The "Watch Root Path" configured on the ClimWeb product snippet, expressed
+  # as an absolute path on the ClimWeb server.
+  #
+  # IMPORTANT: this must match what ClimWeb is scanning. In the CMS the field
+  # may be relative (e.g. "products"), in which case ClimWeb resolves it under
+  # MEDIA_ROOT — write out the full absolute path here.
+  #
+  # ClimWeb then looks for files at:
+  #     <watch_root>/<variable_name>/<format>/<file name convention>.<format>
+  # climweb-sync builds that path for you from each product entry below, so you
+  # never write the destination out by hand.
+  watch_root: /home/cms/climweb/climweb/media/products
+
+  # --- https transport settings (only used when transport: https) -----------
+  # base_url: https://cms.meteo.example.org
+  # token_file: /etc/climweb-sync/token
+  # verify_tls: true
+
+
+# -----------------------------------------------------------------------------
+#  Defaults applied to every product (each can be overridden per product)
+# -----------------------------------------------------------------------------
+defaults:
+
+  # Only send files modified in the last N days. Keeps each run fast once the
+  # source directory has years of history in it. Set to 0 to send everything.
+  max_age_days: 30
+
+  # If true, files deleted on the source server are also deleted on ClimWeb.
+  # Leave false unless you are certain — ClimWeb has already ingested these
+  # files into pages, and deleting the source copy does not unpublish them.
+  delete_remote: false
+
+  # Permissions applied to files landing on the ClimWeb server. They must be
+  # readable by the user the ClimWeb application runs as.
+  chmod: F644
+
+  # Bandwidth cap in KB/s for rsync. 0 means unlimited. Worth setting on a
+  # constrained link so the sync does not saturate the office connection.
+  bwlimit: 0
+
+
+# -----------------------------------------------------------------------------
+#  What to send
+# -----------------------------------------------------------------------------
+#  One entry per product-and-format pair. A product published as both PDF and
+#  PNG gets two entries with the same variable_name and different formats.
+#
+#  variable_name  MUST match the "Variable Name" field on the ClimWeb product
+#                 snippet exactly (Snippets -> Products in the CMS admin).
+#  format         MUST match the "File Format" on the product category, and is
+#                 also the file extension that gets picked up.
+#  src_path       The directory on THIS server where the files are produced.
+#                 Subdirectories are preserved, so a layout like
+#                 <src_path>/2026/bulletin_09-03-2026.pdf works with a
+#                 {yyyy}/... filename convention in ClimWeb.
+# -----------------------------------------------------------------------------
+products:
+
+  - variable_name: weekly_rainfall
+    format: pdf
+    src_path: /home/username/data/wkrainfall
+
+  - variable_name: seasonal_rainfall
+    format: pdf
+    src_path: /home/username/data/seasrainfall
+
+  # An example of per-product overrides. Set enabled: false to skip an entry
+  # without deleting it — useful while testing a new product.
+  # - variable_name: daily_forecast
+  #   format: png
+  #   src_path: /home/username/data/daily
+  #   max_age_days: 7
+  #   enabled: false

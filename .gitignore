@@ -1,0 +1,14 @@
+# Never commit a real configuration — it names internal hosts and key paths.
+config.yaml
+*.local.yaml
+
+# Keys and tokens
+id_*
+*.pem
+*.key
+token
+
+# Local test scaffolding
+.test/
+*.log
+*.state

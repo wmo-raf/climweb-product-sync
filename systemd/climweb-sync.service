@@ -1,0 +1,24 @@
+[Unit]
+Description=Push met service products to the ClimWeb watch folder
+Documentation=https://github.com/wmo-raf/climweb-product-sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@PREFIX@/bin/climweb-sync
+Nice=10
+IOSchedulingClass=idle
+
+# The sync only needs to read the product directories and talk to the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/climweb-sync /var/log/climweb-sync
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
