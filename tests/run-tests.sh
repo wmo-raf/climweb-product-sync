@@ -9,6 +9,8 @@
 #
 #   ./tests/run-tests.sh
 
+# shellcheck source-path=SCRIPTDIR/..
+
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,16 +69,22 @@ echo
 echo "path derivation"
 echo "---------------"
 
+# These three are read by the functions in common.sh, not by this script, which
+# is why shellcheck cannot see the use.
+# shellcheck disable=SC2034
 LIB_DIR="$REPO/lib"
+# shellcheck disable=SC2034
 VERBOSE=0
-# shellcheck source=../lib/common.sh
+# shellcheck source=lib/common.sh
 . "$REPO/lib/common.sh"
 
+# shellcheck disable=SC2034
 CFG_CLIMWEB_WATCH_ROOT="/home/cms/climweb/climweb/media/products"
 check "matches what _ingest_product scans" \
     "/home/cms/climweb/climweb/media/products/weekly_rainfall/pdf" \
     "$(dest_path_for weekly_rainfall pdf)"
 
+# shellcheck disable=SC2034
 CFG_CLIMWEB_WATCH_ROOT="/home/cms/media/products/"
 check "tolerates a trailing slash on watch_root" \
     "/home/cms/media/products/daily_forecast/png" \

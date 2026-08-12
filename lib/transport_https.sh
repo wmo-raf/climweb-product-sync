@@ -70,6 +70,15 @@ https_send() {
     local variable_name="$1" fmt="$2" src="$3" dest="$4" max_age="$5" delete_remote="$6"
     local state token endpoint rel abs fp sent=0 unchanged=0 failed=0
 
+    log_debug "  destination on the server: $dest"
+
+    # The API has no delete operation, so a product configured with
+    # delete_remote would quietly not do what its config says.
+    if is_true "$delete_remote"; then
+        log_warn "  delete_remote is not supported over https and will be ignored."
+        log_warn "  Use transport: rsync if you need deletions mirrored."
+    fi
+
     state="$(_state_file "$variable_name" "$fmt")"
     touch "$state" 2>/dev/null || true
     token="$(_https_token)"

@@ -18,6 +18,14 @@ ok() { printf '  \033[32mok\033[0m   %s\n' "$1"; pass=$((pass+1)); }
 no() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; [ -n "${2:-}" ] && printf '       %s\n' "$2"; fail=$((fail+1)); }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "expected [$2], got [$3]"; fi; }
 
+# expect_in DESCRIPTION FILE PATTERN [CONTEXT-ON-FAILURE]
+# An explicit if/else rather than 'grep && ok || no': in that form the failure
+# branch also runs whenever ok itself returns non-zero, which would report a
+# passing assertion as a failure.
+expect_in() {
+    if grep -q "$3" "$2"; then ok "$1"; else no "$1" "${4:-}"; fi
+}
+
 echo
 echo "setup wizard"
 echo "------------"
@@ -72,17 +80,11 @@ rc=$?
 check "wizard completes successfully" "0" "$rc"
 [ "$rc" -ne 0 ] && sed 's/^/       | /' "$WORK/out.txt" | head -25
 
-grep -q "Weekly Rainfall" "$WORK/out.txt" \
-    && ok "shows the product name it discovered" \
-    || no "shows the product name it discovered"
+expect_in "shows the product name it discovered" "$WORK/out.txt" "Weekly Rainfall"
 
-grep -q "Found 2 .pdf file" "$WORK/out.txt" \
-    && ok "counts the matching source files" \
-    || no "counts the matching source files" "$(grep -i 'found' "$WORK/out.txt" | head -2)"
+expect_in "counts the matching source files" "$WORK/out.txt" "Found 2 .pdf file" "$(grep -i 'found' "$WORK/out.txt" | head -2)"
 
-grep -qi "you do not need to know" "$WORK/out.txt" \
-    && ok "never asks the operator for the destination" \
-    || no "never asks the operator for the destination"
+expect_in "never asks the operator for the destination" "$WORK/out.txt" "you do not need to know"
 
 # --- the config it wrote -----------------------------------------------------
 CONF="$FAKE_ROOT/etc/climweb-sync/config.yaml"
@@ -112,9 +114,8 @@ fi
 CRON="$FAKE_ROOT/etc/cron.d-climweb-sync"
 if [ -f "$CRON" ]; then
     ok "installs a schedule"
-    grep -q '17 \* \* \* \*' "$CRON" \
-        && ok "the 'several times a day' answer maps to an hourly schedule" \
-        || no "the 'several times a day' answer maps to an hourly schedule" "$(grep -v '^#' "$CRON" | tail -1)"
+    expect_in "the 'several times a day' answer maps to an hourly schedule" \
+        "$CRON" '17 \* \* \* \*' "$(grep -v '^#' "$CRON" | tail -1)"
 else
     no "installs a schedule"
 fi
@@ -126,9 +127,7 @@ else
     no "sends a real test file" "$(find "$WATCH" -type f 2>/dev/null | head -3)"
 fi
 
-grep -q "publish automatically" "$WORK/out.txt" \
-    && ok "confirms success in plain language" \
-    || no "confirms success in plain language"
+expect_in "confirms success in plain language" "$WORK/out.txt" "publish automatically"
 
 # --- a normal run using the generated config --------------------------------
 CLIMWEB_SYNC_STATE_DIR="$WORK/state2" "$REPO/climweb-sync" -c "$CONF" -v >"$WORK/sync.txt" 2>&1
@@ -154,45 +153,40 @@ else
     no "a second run uploads nothing" "$(grep -i uploaded "$WORK/sync2.txt" | head -2)"
 fi
 
+# The https API has no delete operation, so a config asking for one must say so
+# rather than silently doing nothing.
+sed 's|  max_age_days: 30|  max_age_days: 30\n  delete_remote: true|' "$CONF" > "$WORK/del.yaml"
+CLIMWEB_SYNC_STATE_DIR="$WORK/state3" "$REPO/climweb-sync" -c "$WORK/del.yaml" >"$WORK/del.txt" 2>&1
+expect_in "warns that delete_remote does nothing over https" \
+    "$WORK/del.txt" "delete_remote is not supported" "$(tail -3 "$WORK/del.txt")"
+
 # --- codes that should be refused -------------------------------------------
 printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "WRONGCODEHERE" "https://cms.test" >"$WORK/bad.txt" 2>&1
-grep -q "not accepted" "$WORK/bad.txt" \
-    && ok "an invalid code is refused with a plain-language explanation" \
-    || no "an invalid code is refused clearly" "$(tail -3 "$WORK/bad.txt")"
+expect_in "an invalid code is refused with a plain-language explanation" "$WORK/bad.txt" "not accepted" "$(tail -3 "$WORK/bad.txt")"
 
 printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/reuse.txt" 2>&1
-grep -q "not accepted" "$WORK/reuse.txt" \
-    && ok "a code cannot be used twice" \
-    || no "a code cannot be used twice" "$(tail -3 "$WORK/reuse.txt")"
+expect_in "a code cannot be used twice" "$WORK/reuse.txt" "not accepted" "$(tail -3 "$WORK/reuse.txt")"
 
 # A code typed in lowercase and without dashes must still work — the alternative
 # is a support call about an invisible formatting difference.
 rm -f "$SHIM_DIR/used_codes"
 printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "k7fa2c9dtx43" "https://cms.test" >"$WORK/loose.txt" 2>&1
-grep -q "Weekly Rainfall" "$WORK/loose.txt" \
-    && ok "accepts a code typed in lowercase without dashes" \
-    || no "accepts a code typed in lowercase without dashes" "$(tail -3 "$WORK/loose.txt")"
+expect_in "accepts a code typed in lowercase without dashes" "$WORK/loose.txt" "Weekly Rainfall" "$(tail -3 "$WORK/loose.txt")"
 
 rm -f "$SHIM_DIR/used_codes"
 printf '%s\n1\n' "$SRC" | SHIM_DOWN=1 "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/down.txt" 2>&1
-grep -q "Could not reach" "$WORK/down.txt" \
-    && ok "an unreachable server gives an actionable message" \
-    || no "an unreachable server gives an actionable message" "$(tail -3 "$WORK/down.txt")"
+expect_in "an unreachable server gives an actionable message" "$WORK/down.txt" "Could not reach" "$(tail -3 "$WORK/down.txt")"
 
 # --- the operator gives a folder with nothing in it -------------------------
 rm -f "$SHIM_DIR/used_codes"
 EMPTY="$WORK/empty"; mkdir -p "$EMPTY"
 printf '%s\nn\n%s\n1\n' "$EMPTY" "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/empty.txt" 2>&1
-grep -q "No .pdf files found" "$WORK/empty.txt" \
-    && ok "warns when the folder holds no matching files, then asks again" \
-    || no "warns when the folder holds no matching files" "$(tail -4 "$WORK/empty.txt")"
+expect_in "warns when the folder holds no matching files, then asks again" "$WORK/empty.txt" "No .pdf files found" "$(tail -4 "$WORK/empty.txt")"
 
 # --- a folder that does not exist -------------------------------------------
 rm -f "$SHIM_DIR/used_codes"
 printf '/no/such/folder\n%s\n1\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/missing.txt" 2>&1
-grep -q "There is no folder at" "$WORK/missing.txt" \
-    && ok "rejects a folder that does not exist, then asks again" \
-    || no "rejects a folder that does not exist" "$(tail -4 "$WORK/missing.txt")"
+expect_in "rejects a folder that does not exist, then asks again" "$WORK/missing.txt" "There is no folder at" "$(tail -4 "$WORK/missing.txt")"
 
 echo
 printf '%d passed, %d failed\n\n' "$pass" "$fail"

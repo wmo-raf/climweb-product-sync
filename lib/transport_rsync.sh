@@ -60,7 +60,7 @@ rsync_send() {
         log_info "  nothing to send (no .$fmt files modified in the last ${max_age:-0} day(s))"
         return 0
     fi
-    log_debug "  $n candidate file(s)"
+    log_debug "  $variable_name: $n candidate file(s)"
 
     local -a opts=(
         --files-from="$list"

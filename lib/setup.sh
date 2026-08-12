@@ -74,7 +74,7 @@ suggest_source_dirs() {
 # --- the wizard ---------------------------------------------------------------
 run_setup() {
     local code="$1" server="$2"
-    local hostname response http_code
+    local hostname http_code
 
     hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo unknown)"
 
@@ -298,7 +298,7 @@ EOF
 
     # -- 6. prove it works ----------------------------------------------------
     printf '  Sending a test file ... '
-    if CLIMWEB_SYNC_SETUP_TEST=1 climweb_sync_selftest "$src_path" "$chosen_format"; then
+    if climweb_sync_selftest "$src_path" "$chosen_format"; then
         printf '%sOK%s\n' "$C_GREEN" "$C_OFF"
     else
         printf '%sfailed%s\n' "$C_RED" "$C_OFF"

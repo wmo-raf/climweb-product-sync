@@ -16,6 +16,12 @@
 
 set -uo pipefail
 
+# Defaults so these are assigned in-file, not only inherited from the caller.
+SHIM_DIR="${SHIM_DIR:-/tmp}"
+SHIM_WATCH="${SHIM_WATCH:-/tmp/shim-watch}"
+SHIM_VALID_CODE="${SHIM_VALID_CODE:-}"
+SHIM_DOWN="${SHIM_DOWN:-0}"
+
 out_file=""
 url=""
 write_out=""
@@ -56,14 +62,14 @@ emit() { # emit HTTP_CODE [BODY]
 }
 
 # --- unreachable server ------------------------------------------------------
-if [ "${SHIM_DOWN:-0}" = "1" ] || [[ "$url" == *"127.0.0.1:1/"* ]]; then
+if [ "$SHIM_DOWN" = "1" ] || [[ "$url" == *"127.0.0.1:1/"* ]]; then
     # Real curl prints 000 on stdout and exits non-zero. The wizard must cope
     # with exactly this, so reproduce both halves.
     [ -n "$write_out" ] && printf '000'
     exit 7
 fi
 
-state="${SHIM_DIR:-/tmp}/used_codes"
+state="$SHIM_DIR/used_codes"
 token="shim-token-0123456789"
 
 # --- POST /api/product-sync/setup/exchange/ ----------------------------------
@@ -77,7 +83,7 @@ if [[ "$url" == *"/setup/exchange/"* ]]; then
         normalised="${cleaned:0:4}-${cleaned:4:4}-${cleaned:8:4}"
     fi
 
-    if [ -z "$normalised" ] || [ "$normalised" != "${SHIM_VALID_CODE:-}" ] \
+    if [ -z "$normalised" ] || [ "$normalised" != "$SHIM_VALID_CODE" ] \
        || grep -Fqx "$normalised" "$state" 2>/dev/null; then
         emit 403 '{"error": "invalid_code", "detail": "not valid"}'
         exit 0
