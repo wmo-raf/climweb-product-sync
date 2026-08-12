@@ -106,6 +106,54 @@ real upload before setup reports success.
 Codes expire after 48 hours and can only be used once. Ask for a new one — it
 takes a few seconds to generate.
 
+## Supported systems
+
+| | Status |
+|---|---|
+| Linux (Ubuntu, Debian, RHEL, Rocky) | Supported. This is what to run in production. |
+| Windows, via WSL2 | Supported — WSL2 *is* Linux. See below. |
+| macOS | Runs, but does not schedule. Fine for testing, not for production. |
+| Windows, without WSL2 | Not supported. |
+
+The tool needs `bash` 3.2 or newer, plus `curl`, `awk` and `find`. Every Linux
+distribution ships all of them. The test suite runs on both Ubuntu and macOS in
+CI, with macOS pinned to bash 3.2 so the oldest supported shell is genuinely
+exercised.
+
+### Windows
+
+Products are usually generated on a Linux server, but if yours are produced on
+Windows, install **WSL2** and run the sync inside it. WSL2 is a real Linux
+system, so everything above works unchanged.
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Then open Ubuntu from the Start menu and run the setup command there. Your
+Windows drives appear under `/mnt/`, so a folder at `D:\weather\rainfall` is
+`/mnt/d/weather/rainfall` — give that path when the wizard asks where the files
+are.
+
+Two things to set, or the sync will stop when you are not looking:
+
+```bash
+# Keep WSL running in the background so cron fires without a user logged in.
+# In /etc/wsl.conf:
+[boot]
+systemd=true
+```
+
+and confirm cron is running inside WSL with `sudo service cron status`. WSL2
+does not start background services by default on older builds.
+
+### macOS
+
+The tool installs and `sudo climweb-sync` works, but macOS ignores
+`/etc/cron.d`, so nothing is scheduled. `install.sh` detects this and says so
+rather than reporting a schedule that would never fire. Use a Linux server for
+anything that has to keep publishing on its own.
+
 ## Checking on it later
 
 ```bash

@@ -17,6 +17,8 @@ pass=0; fail=0
 ok() { printf '  \033[32mok\033[0m   %s\n' "$1"; pass=$((pass+1)); }
 no() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; [ -n "${2:-}" ] && printf '       %s\n' "$2"; fail=$((fail+1)); }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "expected [$2], got [$3]"; fi; }
+# GNU and BSD stat take different flags.
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || printf ''; }
 
 # expect_in DESCRIPTION FILE PATTERN [CONTEXT-ON-FAILURE]
 # An explicit if/else rather than 'grep && ok || no': in that form the failure
@@ -110,7 +112,7 @@ fi
 TOKEN_FILE="$FAKE_ROOT/etc/climweb-sync/token"
 if [ -f "$TOKEN_FILE" ]; then
     ok "saves the token"
-    check "token file is not readable by other users" "600" "$(stat -c '%a' "$TOKEN_FILE")"
+    check "token file is not readable by other users" "600" "$(file_mode "$TOKEN_FILE")"
 else
     no "saves the token"
 fi

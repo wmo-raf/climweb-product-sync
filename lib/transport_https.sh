@@ -18,10 +18,15 @@ _https_endpoint() {
     printf '%s/api/product-sync/upload/' "$CFG_CLIMWEB_BASE_URL"
 }
 
+# Populates the CURL_ARGS array.
+#
+# This sets a global rather than printing lines for the caller to read back:
+# reading them back needs mapfile, which is a bash 4 builtin and so absent on
+# macOS (bash 3.2) and other older systems.
+CURL_ARGS=()
 _curl_base() {
-    local -a args=(--silent --show-error --location --max-time 300 --retry 2 --retry-delay 5)
-    is_true "$CFG_CLIMWEB_VERIFY_TLS" || args+=(--insecure)
-    printf '%s\n' "${args[@]}"
+    CURL_ARGS=(--silent --show-error --location --max-time 300 --retry 2 --retry-delay 5)
+    is_true "$CFG_CLIMWEB_VERIFY_TLS" || CURL_ARGS+=(--insecure)
 }
 
 https_check() {
@@ -33,13 +38,12 @@ https_check() {
 
     is_true "$CFG_CLIMWEB_VERIFY_TLS" || log_warn "verify_tls is false — TLS certificates are not being checked"
 
-    local -a curl_args
-    mapfile -t curl_args < <(_curl_base)
+    _curl_base
 
     # curl itself prints '000' on a failed connection, so appending another with
     # '|| echo 000' would produce '000000' and fall through to the wrong branch.
     local code
-    code="$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' \
+    code="$(curl "${CURL_ARGS[@]}" -o /dev/null -w '%{http_code}' \
         -H "Authorization: Bearer $token" \
         "$CFG_CLIMWEB_BASE_URL/api/product-sync/ping/" 2>/dev/null)" || true
     code="${code:-000}"
@@ -84,8 +88,7 @@ https_send() {
     token="$(_https_token)"
     endpoint="$(_https_endpoint)"
 
-    local -a curl_args
-    mapfile -t curl_args < <(_curl_base)
+    _curl_base
 
     while IFS= read -r rel; do
         [ -n "$rel" ] || continue
@@ -104,7 +107,7 @@ https_send() {
         fi
 
         local code
-        code="$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' \
+        code="$(curl "${CURL_ARGS[@]}" -o /dev/null -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer $token" \
             -F "variable_name=$variable_name" \

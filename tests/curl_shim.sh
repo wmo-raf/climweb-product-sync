@@ -28,8 +28,12 @@ out_file=""
 url=""
 write_out=""
 auth=""
-declare -A data=()
-declare -A form=()
+# Plain variables rather than 'declare -A': associative arrays are bash 4 only,
+# and the tests must run on macOS (bash 3.2) as well as on CI.
+data_code=""
+form_variable_name=""
+form_format=""
+form_relative_path=""
 file_path=""
 
 while [ $# -gt 0 ]; do
@@ -39,14 +43,16 @@ while [ $# -gt 0 ]; do
         -H) case "$2" in Authorization:*) auth="${2#Authorization: }" ;; esac; shift 2 ;;
         -X) shift 2 ;;
         --data-urlencode)
-            data["${2%%=*}"]="${2#*=}"; shift 2 ;;
+            case "${2%%=*}" in code) data_code="${2#*=}" ;; esac
+            shift 2 ;;
         -F)
             key="${2%%=*}"; value="${2#*=}"
-            if [ "$key" = "file" ]; then
-                file_path="${value#@}"
-            else
-                form["$key"]="$value"
-            fi
+            case "$key" in
+                file)          file_path="${value#@}" ;;
+                variable_name) form_variable_name="$value" ;;
+                format)        form_format="$value" ;;
+                relative_path) form_relative_path="$value" ;;
+            esac
             shift 2 ;;
         --max-time|--retry|--retry-delay) shift 2 ;;
         --silent|--show-error|--location|--insecure) shift ;;
@@ -76,7 +82,7 @@ token="shim-token-0123456789"
 
 # --- POST /api/product-sync/setup/exchange/ ----------------------------------
 if [[ "$url" == *"/setup/exchange/"* ]]; then
-    raw="${data[code]:-}"
+    raw="$data_code"
     # Same normalisation the server does: uppercase, drop anything outside the
     # unambiguous alphabet, require exactly 12 characters.
     cleaned="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]' | tr -cd 'ACDEFGHJKMNPQRTUVWXYZ2346789')"
@@ -122,9 +128,9 @@ if [[ "$url" == *"/upload/"* ]]; then
         exit 0
     fi
 
-    variable_name="${form[variable_name]:-}"
-    fmt="${form[format]:-}"
-    rel="${form[relative_path]:-}"
+    variable_name="$form_variable_name"
+    fmt="$form_format"
+    rel="$form_relative_path"
 
     [ "$variable_name" = "weekly_rainfall" ] || { emit 400 '{"error":"wrong_product"}'; exit 0; }
     case ",$SHIM_FORMATS," in

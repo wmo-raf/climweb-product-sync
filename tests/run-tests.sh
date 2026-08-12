@@ -169,7 +169,7 @@ if [ -f "$DEST/2026/bulletin_03-08-2026.pdf" ]; then ok "subdirectory preserved 
 if [ -f "$DEST/notes.txt" ]; then no "non-matching formats excluded" "notes.txt was copied"; else ok "non-matching formats excluded"; fi
 if [ -f "$DEST/ancient.pdf" ]; then no "files older than max_age_days excluded" "ancient.pdf was copied"; else ok "files older than max_age_days excluded"; fi
 
-mode="$(stat -c '%a' "$DEST/bulletin_01-08-2026.pdf" 2>/dev/null)"
+mode="$(file_mode "$DEST/bulletin_01-08-2026.pdf")"
 check "chmod applied so ClimWeb can read the file" "644" "$mode"
 
 # A second run must be a no-op, which is what makes an hourly cron job safe.

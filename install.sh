@@ -85,6 +85,16 @@ else
 fi
 
 # --- schedule ----------------------------------------------------------------
+# macOS cron does not read /etc/cron.d, so a job written there never fires.
+# The Mac is a development platform for this tool, not a deployment target.
+if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && [ "$SCHEDULE" != "none" ]; then
+    say "macOS detected — skipping the schedule."
+    say "  macOS does not read /etc/cron.d, so a cron job here would never run."
+    say "  The tool is installed and 'sudo climweb-sync' works; scheduling is"
+    say "  supported on Linux servers."
+    SCHEDULE="none"
+fi
+
 case "$SCHEDULE" in
     cron)
         cat > /etc/cron.d/climweb-sync <<EOF

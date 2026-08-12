@@ -66,7 +66,7 @@ config_load() {
     # A config can hold an SSH key path or API token path; warn if it is world
     # readable, since these servers are often shared between several teams.
     local mode
-    mode="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo '')"
+    mode="$(file_mode "$file")"
     case "$mode" in
         *[2367]) log_warn "$file is world-readable; consider: chmod 640 $file" ;;
     esac
@@ -174,6 +174,19 @@ is_true() {
     case "$1" in true|yes|1) return 0 ;; *) return 1 ;; esac
 }
 
+# Octal permission bits for a file, or "" if they cannot be determined.
+# GNU stat and BSD stat take different flags, and this tool runs on both.
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || printf ''
+}
+
+# The tool is developed on macOS but deployed on Linux. This matters for
+# scheduling: macOS cron does not read /etc/cron.d, so a job written there
+# would never fire, and reporting "Scheduled" would be a lie.
+is_macos() {
+    [ "$(uname -s 2>/dev/null)" = "Darwin" ]
+}
+
 # -----------------------------------------------------------------------------
 # The one path rule that matters.
 #
@@ -207,10 +220,15 @@ list_source_files() {
     # copied half-formed, or ClimWeb will ingest a truncated PDF.
     find_args+=(! -name '.*' ! -name '*.tmp' ! -name '*.part')
 
+    # NUL-delimited read so odd filenames survive, then a plain sort on the
+    # relative paths. 'sort -z' would be neater but is GNU-only, and this tool
+    # has to run on BSD userlands too. LC_ALL=C keeps the order identical
+    # across machines regardless of locale, which matters because setup sends
+    # the first file as its test upload.
     local f
     while IFS= read -r -d '' f; do
         printf '%s\n' "${f#"$src"/}"
-    done < <(find "${find_args[@]}" -print0 2>/dev/null | sort -z)
+    done < <(find "${find_args[@]}" -print0 2>/dev/null) | LC_ALL=C sort
 }
 
 count_source_files() {

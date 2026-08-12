@@ -383,14 +383,15 @@ EOF
             printf '%sOK%s\n' "$C_GREEN" "$C_OFF"
         else
             printf '%sfailed%s\n' "$C_RED" "$C_OFF"
+            [ -n "$SELFTEST_DETAIL" ] && say_dim "      $SELFTEST_DETAIL"
             test_failures=$((test_failures + 1))
         fi
     done
 
     if [ "$test_failures" -gt 0 ]; then
         say
-        say_dim "  The settings were saved, but $test_failures test upload(s) did not"
-        say_dim "  succeed. Run this to see the details:"
+        say_dim "  The settings were saved, so nothing is lost. Once the problem"
+        say_dim "  above is resolved, run this to retry:"
         say_dim "      sudo climweb-sync --verbose"
         say
         return 1
@@ -398,7 +399,17 @@ EOF
 
     # -- 7. schedule ----------------------------------------------------------
     install -d -m 0750 /var/log/climweb-sync /var/lib/climweb-sync
-    cat > /etc/cron.d/climweb-sync <<EOF
+
+    if is_macos; then
+        # macOS cron ignores /etc/cron.d entirely, so writing the job here and
+        # announcing "Scheduled" would leave someone believing their bulletins
+        # publish automatically when nothing ever runs.
+        say_warn "Automatic scheduling was skipped."
+        say_dim  "      This is macOS, which does not read /etc/cron.d. The sync is"
+        say_dim  "      supported for day-to-day use on Linux servers."
+        say_dim  "      You can still publish at any time with: sudo climweb-sync"
+    else
+        cat > /etc/cron.d/climweb-sync <<EOF
 # climweb-sync — publishes $PRODUCT_NAME to the ClimWeb website.
 # Written by 'climweb-sync setup'. Safe to edit.
 SHELL=/bin/bash
@@ -407,8 +418,9 @@ MAILTO=root
 
 $cron_spec root /usr/local/bin/climweb-sync >> /var/log/climweb-sync/sync.log 2>&1
 EOF
-    chmod 0644 /etc/cron.d/climweb-sync
-    say_ok "Scheduled"
+        chmod 0644 /etc/cron.d/climweb-sync
+        say_ok "Scheduled"
+    fi
 
     # -- done -----------------------------------------------------------------
     say
@@ -450,8 +462,14 @@ EOF
 
 # Upload a single real file as proof the whole path works, rather than
 # declaring success just because a config file was written.
+#
+# On failure, SELFTEST_DETAIL explains why. Reporting only "failed" leaves the
+# operator with nothing to act on, which defeats the point of testing at all.
+SELFTEST_DETAIL=""
 climweb_sync_selftest() {
-    local src="$1" fmt="$2" one rel
+    local src="$1" fmt="$2" one rel code body err detail
+
+    SELFTEST_DETAIL=""
 
     # Use the same selection the real sync uses, rather than a bare find. That
     # keeps the test representative — it applies the tmp/part/dotfile filtering
@@ -460,21 +478,58 @@ climweb_sync_selftest() {
     [ -n "$rel" ] || return 0   # nothing to send is not a failure
 
     one="$src/$rel"
+    body="$(mktemp)"
+    err="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$body' '$err'" RETURN
 
-    local code
     code="$(curl --silent --show-error --location --max-time 120 \
-        -o /dev/null -w '%{http_code}' \
+        -o "$body" -w '%{http_code}' \
         -X POST \
         -H "Authorization: Bearer $TOKEN" \
         -F "variable_name=$VARIABLE_NAME" \
         -F "format=$fmt" \
         -F "relative_path=$rel" \
         -F "file=@$one" \
-        "$BASE_URL/api/product-sync/upload/" 2>/dev/null)" || true
+        "$BASE_URL/api/product-sync/upload/" 2>"$err")" || true
     code="${code:-000}"
 
     case "$code" in
         200|201|409) return 0 ;;
-        *) return 1 ;;
     esac
+
+    # The API returns {"error": ..., "detail": "..."}; the detail is written for
+    # a human, so prefer it over anything we could invent here.
+    detail="$(sed -n 's/.*"detail": *"\([^"]*\)".*/\1/p' "$body" 2>/dev/null | head -1)"
+
+    case "$code" in
+        000)
+            SELFTEST_DETAIL="Could not reach $BASE_URL to upload the file.
+      $(head -2 "$err" 2>/dev/null)
+      The setup code worked, so this is usually a proxy or TLS problem
+      on the upload request specifically."
+            ;;
+        401|403)
+            SELFTEST_DETAIL="The server rejected the token (HTTP $code).
+      Ask for a new setup code and run this again."
+            ;;
+        404)
+            SELFTEST_DETAIL="No upload endpoint at $BASE_URL (HTTP 404).
+      This ClimWeb version may be older than the one that issued the code."
+            ;;
+        413)
+            SELFTEST_DETAIL="The file is larger than the website accepts (HTTP 413).
+      Ask the website administrator to raise the upload limit."
+            ;;
+        5*)
+            SELFTEST_DETAIL="The website hit an internal error (HTTP $code).
+      ${detail:-Ask the administrator to check the ClimWeb logs.}"
+            ;;
+        *)
+            SELFTEST_DETAIL="The website refused the file (HTTP $code).
+      ${detail:-No explanation was returned.}
+      File sent: $rel"
+            ;;
+    esac
+    return 1
 }

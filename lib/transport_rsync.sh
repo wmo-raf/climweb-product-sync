@@ -16,7 +16,7 @@ rsync_check() {
     command -v ssh   >/dev/null 2>&1 || die 2 "ssh is not installed on this server"
 
     local mode
-    mode="$(stat -c '%a' "$CFG_CLIMWEB_SSH_KEY" 2>/dev/null || echo '')"
+    mode="$(file_mode "$CFG_CLIMWEB_SSH_KEY")"
     case "$mode" in
         600|400) ;;
         '') ;;

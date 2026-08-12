@@ -18,11 +18,53 @@ jobs:
         run: shellcheck -x -P . climweb-sync install.sh lib/*.sh tests/*.sh
 
   tests:
-    runs-on: ubuntu-latest
+    # Ubuntu is what met service servers run. macOS is here because it ships
+    # bash 3.2 and a BSD userland, which is the combination that catches
+    # mapfile, sort -z, readlink -f and friends — none of which fail on Ubuntu.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      # GitHub's macOS images carry a Homebrew bash 5 that shadows the system
+      # one, so '#!/usr/bin/env bash' would silently pick up bash 5 and the
+      # oldest-supported shell would never actually be exercised. Putting a
+      # symlink to /bin/bash first on PATH forces every script into bash 3.2.
+      - name: Force bash 3.2 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$HOME/oldbash"
+          ln -sf /bin/bash "$HOME/oldbash/bash"
+          echo "$HOME/oldbash" >> "$GITHUB_PATH"
+
+      - name: Report the shell under test
+        run: |
+          command -v bash
+          bash --version | head -1
+
+      - name: Fail if macOS is not actually testing bash 3.x
+        if: runner.os == 'macOS'
+        run: |
+          major="$(bash -c 'echo ${BASH_VERSINFO[0]}')"
+          if [ "$major" != "3" ]; then
+            echo "Expected bash 3.x on macOS, got $major — the old-bash" >&2
+            echo "coverage this matrix exists for is not happening." >&2
+            exit 1
+          fi
+
+      - name: Install rsync
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y rsync
+          else
+            rsync --version | head -1
+          fi
+
+      - name: Portability check
+        run: ./tests/check-portability.sh
       - name: Transport and config tests
         run: ./tests/run-tests.sh
       - name: Setup wizard tests
