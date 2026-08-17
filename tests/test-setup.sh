@@ -118,7 +118,17 @@ else
 fi
 
 CRON="$FAKE_ROOT/etc/cron.d-climweb-sync"
-if [ -f "$CRON" ]; then
+if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+    # macOS cron does not read /etc/cron.d, so writing a job there and calling
+    # it scheduled would be a lie. The wizard is expected to skip it and say so.
+    if [ -f "$CRON" ]; then
+        no "does not write a cron job on macOS" "macOS ignores /etc/cron.d, so it would never fire"
+    else
+        ok "does not write a cron job on macOS"
+    fi
+    expect_in "explains why scheduling was skipped" \
+        "$WORK/out.txt" "does not read /etc/cron.d" "$(tail -6 "$WORK/out.txt")"
+elif [ -f "$CRON" ]; then
     ok "installs a schedule"
     # Every 10 minutes for everyone: a no-op run costs ~0.1s, and a longer
     # interval delays both new bulletins and any full sync asked for from the CMS.
