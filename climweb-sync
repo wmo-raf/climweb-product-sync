@@ -78,6 +78,9 @@ Options:
                       /etc/climweb-sync/config.yaml, then ./config.yaml)
   -n, --dry-run       Show exactly what would be transferred, send nothing
       --check         Validate the config and test the connection, then exit
+      --full          Re-offer every file, ignoring max_age_days and the record
+                      of what was already sent. Use after a problem, or to
+                      backfill. Files the website already has are not resent.
       --only NAME     Only sync products whose variable_name is NAME
   -v, --verbose       List every file transferred
   -V, --version       Print version and exit
@@ -138,6 +141,7 @@ while [ $# -gt 0 ]; do
         -c|--config)  CONFIG="${2:-}"; shift 2 ;;
         -n|--dry-run) DRY_RUN=1; shift ;;
         --check)      CHECK_ONLY=1; shift ;;
+        --full)       FULL_SYNC=1; shift ;;
         --only)       ONLY_PRODUCT="${2:-}"; shift 2 ;;
         -v|--verbose) VERBOSE=1; shift ;;
         -V|--version) echo "climweb-sync $VERSION"; exit 0 ;;
@@ -236,6 +240,12 @@ for i in $(seq 1 "$CFG_PRODUCT_COUNT"); do
 done
 
 log_info "done: $synced product(s) synced, $skipped disabled, $failures failed"
+
+# Let the transport close out anything it started — currently, confirming a
+# full sync that the website asked for.
+if command -v "${CFG_CLIMWEB_TRANSPORT}_finish" >/dev/null 2>&1; then
+    "${CFG_CLIMWEB_TRANSPORT}_finish" "$failures"
+fi
 
 if [ "$failures" -gt 0 ]; then
     exit 1

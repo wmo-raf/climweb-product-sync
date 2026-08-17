@@ -52,7 +52,22 @@ used to log in, read anything, or touch any other part of the website.
 Generating a new code immediately invalidates the previous one, so if you are
 unsure whether a code went astray, just generate another.
 
-### 4. Watch for the connection
+### 4. Asking for everything to be re-sent
+
+**Sync all files**, next to a server under *Connected servers*, asks it to
+re-offer every file it has — ignoring the usual age limit and its record of
+what it already sent. Use it when the website looks out of step with the source,
+or to pull in an archive after first setup.
+
+It is a request, not a command: nothing can be pushed to the met service's
+machine, so it takes effect the next time that server checks in. Servers check
+every 10 minutes, so expect it to happen within a few minutes. The row shows
+**Full sync pending** until then, and the completion time afterwards.
+
+Files already on the website are not transferred again, so the button is safe
+to press even for a large archive.
+
+### 5. Watch for the connection
 
 The **Connected servers** section on the same screen fills in as soon as the met
 service runs the command, and shows how many files have arrived and when the

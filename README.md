@@ -12,7 +12,7 @@ without anyone uploading anything by hand.
   ┌──────────────────────┐                        ┌──────────────────────────┐
   │ /data/wkrainfall/    │                        │                          │
   │   bulletin_w32.pdf   │  ── climweb-sync ──▶   │   Weekly Rainfall        │
-  │   bulletin_w33.pdf   │      (every hour)      │   published automatically│
+  │   bulletin_w33.pdf   │     (every 10 min)     │   published automatically│
   └──────────────────────┘                        └──────────────────────────┘
 ```
 
@@ -53,11 +53,6 @@ question — which folder the files are in — and sets up everything else itsel
         bulletin_2026-07-27.pdf
 
   ────────────────────────────────────────────────────────
-  How often are new files produced?
-    1) Several times a day    (check every hour)
-    2) Once a day             (check every morning)
-
-  Choose [1]: 2
 
   ✓ Configuration saved
     Sending a test file ... OK
@@ -160,9 +155,34 @@ anything that has to keep publishing on its own.
 sudo climweb-sync             # run now, without waiting for the schedule
 sudo climweb-sync --check     # confirm everything still works
 sudo climweb-sync --dry-run   # show what would be sent, send nothing
+sudo climweb-sync --full      # re-offer every file, ignoring the age limit
 ```
 
 Logs are in `/var/log/climweb-sync/sync.log`.
+
+## Forcing a full sync
+
+Normal runs only consider files changed in the last `max_age_days`, and skip
+anything already sent. When the two sides have drifted apart — after a problem,
+or to backfill an archive — a full sync re-offers everything. Files the website
+already has cost nothing: it answers "already present" and no data moves.
+
+**From the source server:**
+
+```bash
+sudo climweb-sync --full
+```
+
+**From the website**, on the product's *Automated Publishing* page, press
+**Sync all files** next to the server in *Connected servers*.
+
+That second one is not instant. Nothing can be pushed *to* the met service's
+machine — traffic only goes one way — so the request waits until that server
+next checks in. That is every 10 minutes, so in practice a few minutes. The
+panel shows "Full sync pending" until it happens, then the time it completed.
+
+If the run fails partway, the request stays pending and is retried on the
+following run rather than being silently lost.
 
 ## Setting it up by hand
 

@@ -79,8 +79,8 @@ run_setup "\$1" "\$2"
 HARNESS
 chmod +x "$WORK/run.sh"
 
-# Answers: the source folder, then the schedule choice.
-printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" > "$WORK/out.txt" 2>&1
+# The only answer needed is the source folder.
+printf '%s\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" > "$WORK/out.txt" 2>&1
 rc=$?
 
 check "wizard completes successfully" "0" "$rc"
@@ -120,8 +120,15 @@ fi
 CRON="$FAKE_ROOT/etc/cron.d-climweb-sync"
 if [ -f "$CRON" ]; then
     ok "installs a schedule"
-    expect_in "the 'several times a day' answer maps to an hourly schedule" \
-        "$CRON" '17 \* \* \* \*' "$(grep -v '^#' "$CRON" | tail -1)"
+    # Every 10 minutes for everyone: a no-op run costs ~0.1s, and a longer
+    # interval delays both new bulletins and any full sync asked for from the CMS.
+    expect_in "schedules a check every 10 minutes" \
+        "$CRON" '\*/10 \* \* \* \*' "$(grep -v '^#' "$CRON" | tail -1)"
+    if grep -qE '^[0-9]+ \*' "$CRON"; then
+        no "does not fall back to an hourly-or-worse schedule" "$(grep -v '^#' "$CRON" | tail -1)"
+    else
+        ok "does not fall back to an hourly-or-worse schedule"
+    fi
 else
     no "installs a schedule"
 fi
@@ -163,7 +170,7 @@ else
     ok "non-matching formats are not uploaded"
 fi
 
-# A second run must be a no-op, which is what makes the hourly schedule safe.
+# A second run must be a no-op, which is what makes a 10-minute schedule safe.
 CLIMWEB_SYNC_STATE_DIR="$WORK/state2" "$REPO/climweb-sync" -c "$CONF" >"$WORK/sync2.txt" 2>&1
 if grep -q '0 uploaded' "$WORK/sync2.txt"; then
     ok "a second run uploads nothing"
@@ -179,21 +186,100 @@ expect_in "warns that delete_remote does nothing over https" \
     "$WORK/del.txt" "delete_remote is not supported" "$(tail -3 "$WORK/del.txt")"
 
 # --- codes that should be refused -------------------------------------------
-printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "WRONGCODEHERE" "https://cms.test" >"$WORK/bad.txt" 2>&1
+printf '%s\n' "$SRC" | "$WORK/run.sh" "WRONGCODEHERE" "https://cms.test" >"$WORK/bad.txt" 2>&1
 expect_in "an invalid code is refused with a plain-language explanation" "$WORK/bad.txt" "not accepted" "$(tail -3 "$WORK/bad.txt")"
 
-printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/reuse.txt" 2>&1
+printf '%s\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/reuse.txt" 2>&1
 expect_in "a code cannot be used twice" "$WORK/reuse.txt" "not accepted" "$(tail -3 "$WORK/reuse.txt")"
 
 # A code typed in lowercase and without dashes must still work — the alternative
 # is a support call about an invisible formatting difference.
 rm -f "$SHIM_DIR/used_codes"
-printf '%s\n1\n' "$SRC" | "$WORK/run.sh" "k7fa2c9dtx43" "https://cms.test" >"$WORK/loose.txt" 2>&1
+printf '%s\n' "$SRC" | "$WORK/run.sh" "k7fa2c9dtx43" "https://cms.test" >"$WORK/loose.txt" 2>&1
 expect_in "accepts a code typed in lowercase without dashes" "$WORK/loose.txt" "Weekly Rainfall" "$(tail -3 "$WORK/loose.txt")"
 
 rm -f "$SHIM_DIR/used_codes"
-printf '%s\n1\n' "$SRC" | SHIM_DOWN=1 "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/down.txt" 2>&1
+printf '%s\n' "$SRC" | SHIM_DOWN=1 "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/down.txt" 2>&1
 expect_in "an unreachable server gives an actionable message" "$WORK/down.txt" "Could not reach" "$(tail -3 "$WORK/down.txt")"
+
+# --- the "Sync all files" button in the CMS ---------------------------------
+# The request cannot be pushed to this machine, so it arrives as a flag on the
+# ping the client already makes. Files older than max_age_days, and files
+# already recorded as sent, must both be re-offered.
+OLDSRC="$WORK/data/withold"
+mkdir -p "$OLDSRC"
+printf 'RECENT' > "$OLDSRC/bulletin_recent.pdf"
+printf 'OLD' > "$OLDSRC/bulletin_ancient.pdf"
+touch -t 202401010000 "$OLDSRC/bulletin_ancient.pdf"
+
+cat > "$WORK/old.yaml" <<EOF
+climweb:
+  transport: https
+  base_url: https://cms.test
+  token_file: $FAKE_ROOT/etc/climweb-sync/token
+  watch_root: $WATCH
+defaults:
+  max_age_days: 30
+products:
+  - variable_name: weekly_rainfall
+    format: pdf
+    src_path: $OLDSRC
+EOF
+
+OLDWATCH="$WATCH/weekly_rainfall/pdf/bulletin_ancient.pdf"
+rm -f "$OLDWATCH"
+
+# A normal run leaves the old file behind, by design.
+CLIMWEB_SYNC_STATE_DIR="$WORK/state5" "$REPO/climweb-sync" -c "$WORK/old.yaml" >/dev/null 2>&1
+if [ -f "$OLDWATCH" ]; then
+    no "a normal run respects max_age_days" "the old file was sent"
+else
+    ok "a normal run respects max_age_days"
+fi
+
+# --full picks it up.
+CLIMWEB_SYNC_STATE_DIR="$WORK/state5" "$REPO/climweb-sync" -c "$WORK/old.yaml" --full >"$WORK/full.txt" 2>&1
+check "--full exits cleanly" "0" "$?"
+if [ -f "$OLDWATCH" ]; then
+    ok "--full re-offers files older than max_age_days"
+else
+    no "--full re-offers files older than max_age_days" "$(tail -4 "$WORK/full.txt")"
+fi
+expect_in "--full says it is ignoring the age limit" "$WORK/full.txt" "ignoring max_age_days"
+
+# --full alone must not tell the website anything: nothing asked for it.
+if [ -f "$SHIM_DIR/full_sync_acks" ]; then
+    no "--full does not acknowledge an unrequested sync" "an ack was sent"
+else
+    ok "--full does not acknowledge an unrequested sync"
+fi
+
+# Now the same thing driven from the CMS.
+rm -f "$OLDWATCH" "$SHIM_DIR/full_sync_acks"
+SHIM_FULL_SYNC=true CLIMWEB_SYNC_STATE_DIR="$WORK/state5" \
+    "$REPO/climweb-sync" -c "$WORK/old.yaml" >"$WORK/req.txt" 2>&1
+check "a requested full sync exits cleanly" "0" "$?"
+expect_in "reports that the website asked for it" "$WORK/req.txt" "asked for every file"
+if [ -f "$OLDWATCH" ]; then
+    ok "a requested full sync re-sends old files"
+else
+    no "a requested full sync re-sends old files" "$(tail -4 "$WORK/req.txt")"
+fi
+if [ -f "$SHIM_DIR/full_sync_acks" ]; then
+    ok "confirms completion back to the website"
+else
+    no "confirms completion back to the website" "no ack recorded"
+fi
+
+# A dry run must not clear a pending request.
+rm -f "$SHIM_DIR/full_sync_acks"
+SHIM_FULL_SYNC=true CLIMWEB_SYNC_STATE_DIR="$WORK/state6" \
+    "$REPO/climweb-sync" -c "$WORK/old.yaml" --dry-run >/dev/null 2>&1
+if [ -f "$SHIM_DIR/full_sync_acks" ]; then
+    no "a dry run leaves the request pending" "it acknowledged anyway"
+else
+    ok "a dry run leaves the request pending"
+fi
 
 # --- a product published in more than one format ----------------------------
 # Both formats must be set up. Configuring only one is the failure this whole
@@ -210,7 +296,7 @@ printf 'PDF' > "$MSRC/bulletin_01-08-2026.pdf"
 printf 'PNG' > "$MSRC/bulletin_01-08-2026.png"
 
 # Both formats in one folder: the wizard should offer to reuse it.
-setup_multiformat "$MSRC\ny\n1\n" >"$WORK/multi.txt" 2>&1
+setup_multiformat "$MSRC\ny\n" >"$WORK/multi.txt" 2>&1
 check "multi-format setup completes" "0" "$?"
 
 MCONF="$FAKE_ROOT/etc/climweb-sync/config.yaml"
@@ -237,13 +323,13 @@ PDFSRC="$WORK/data/pdfonly"
 mkdir -p "$PDFSRC"
 printf 'PDF2' > "$PDFSRC/bulletin_02-08-2026.pdf"
 
-setup_multiformat "$PDFSRC\n$PSRC\n1\n" >"$WORK/multi2.txt" 2>&1
+setup_multiformat "$PDFSRC\n$PSRC\n" >"$WORK/multi2.txt" 2>&1
 check "accepts a different folder per format" "0" "$?"
 expect_in "records the pdf folder" "$MCONF" "src_path: $PDFSRC"
 expect_in "records the png folder" "$MCONF" "src_path: $PSRC"
 
 # Skipping a format that is not produced on this server.
-setup_multiformat "$PDFSRC\n\n1\n" >"$WORK/multi3.txt" 2>&1
+setup_multiformat "$PDFSRC\n\n" >"$WORK/multi3.txt" 2>&1
 check "a format can be skipped" "0" "$?"
 check "only the format that was kept is written" "1" "$(grep -c 'variable_name:' "$MCONF" 2>/dev/null || echo 0)"
 expect_in "warns clearly that the skipped format will not publish" \
@@ -264,12 +350,12 @@ rm -f "$SHIM_DIR/used_codes"
 # --- the operator gives a folder with nothing in it -------------------------
 rm -f "$SHIM_DIR/used_codes"
 EMPTY="$WORK/empty"; mkdir -p "$EMPTY"
-printf '%s\nn\n%s\n1\n' "$EMPTY" "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/empty.txt" 2>&1
+printf '%s\nn\n%s\n' "$EMPTY" "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/empty.txt" 2>&1
 expect_in "warns when the folder holds no matching files, then asks again" "$WORK/empty.txt" "No .pdf files found" "$(tail -4 "$WORK/empty.txt")"
 
 # --- a folder that does not exist -------------------------------------------
 rm -f "$SHIM_DIR/used_codes"
-printf '/no/such/folder\n%s\n1\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/missing.txt" 2>&1
+printf '/no/such/folder\n%s\n' "$SRC" | "$WORK/run.sh" "$VALID_CODE" "https://cms.test" >"$WORK/missing.txt" 2>&1
 expect_in "rejects a folder that does not exist, then asks again" "$WORK/missing.txt" "There is no folder at" "$(tail -4 "$WORK/missing.txt")"
 
 echo

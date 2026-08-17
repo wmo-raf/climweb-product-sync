@@ -1,14 +1,15 @@
 [Unit]
-Description=Run climweb-sync hourly
+Description=Run climweb-sync every 10 minutes
 Documentation=https://github.com/wmo-raf/climweb-product-sync
 
 [Timer]
-# Hourly by default. For products generated once a day, OnCalendar=*-*-* 06:30:00
-# is kinder to a constrained link.
-OnCalendar=hourly
+# Every 10 minutes. A run with nothing to send is one directory walk and one
+# small request — about a tenth of a second — so a longer interval saves nothing
+# and only delays new bulletins and any full sync requested from the CMS.
+OnCalendar=*:0/10
 
 # Spread the load if several services sync to the same ClimWeb host.
-RandomizedDelaySec=5m
+RandomizedDelaySec=60
 
 # Catch up after the server has been off or offline.
 Persistent=true

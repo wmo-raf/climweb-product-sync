@@ -10,6 +10,12 @@
 # The server side of this is specified in docs/SERVER-API.md. Check that your
 # ClimWeb version exposes the endpoint before choosing this transport.
 
+# Set to 1 by --full on the command line, or by the website asking for one.
+# FULL_SYNC_FROM_SERVER distinguishes the two, because only a request that came
+# from the website needs acknowledging back to it.
+FULL_SYNC="${FULL_SYNC:-0}"
+FULL_SYNC_FROM_SERVER=0
+
 _https_token() {
     tr -d '\r\n' < "$CFG_CLIMWEB_TOKEN_FILE"
 }
@@ -40,13 +46,31 @@ https_check() {
 
     _curl_base
 
+    local body
+    body="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$body'" RETURN
+
     # curl itself prints '000' on a failed connection, so appending another with
     # '|| echo 000' would produce '000000' and fall through to the wrong branch.
     local code
-    code="$(curl "${CURL_ARGS[@]}" -o /dev/null -w '%{http_code}' \
+    code="$(curl "${CURL_ARGS[@]}" -o "$body" -w '%{http_code}' \
         -H "Authorization: Bearer $token" \
-        "$CFG_CLIMWEB_BASE_URL/api/product-sync/ping/" 2>/dev/null)" || true
+        "$CFG_CLIMWEB_BASE_URL/api/product-sync/ping/?format=env" 2>/dev/null)" || true
     code="${code:-000}"
+
+    # An editor can ask, from the CMS, for everything to be re-sent. There is no
+    # way to push that request to this machine, so it arrives as a flag on the
+    # check we already make at the start of every run.
+    #
+    # Read it with sed rather than sourcing the response: this is network input,
+    # and nothing here needs to be executed.
+    if [ "$code" = "200" ] && \
+       [ "$(sed -n "s/^FULL_SYNC_REQUESTED='\\(.*\\)'\$/\\1/p" "$body")" = "true" ]; then
+        FULL_SYNC_FROM_SERVER=1
+        FULL_SYNC=1
+        log_info "The website has asked for every file to be re-sent."
+    fi
 
     case "$code" in
         200) log_debug "API reachable and token accepted" ;;
@@ -88,6 +112,14 @@ https_send() {
     token="$(_https_token)"
     endpoint="$(_https_endpoint)"
 
+    # A full sync re-offers everything: ignore the age limit, and ignore the
+    # record of what was already sent. Files the server already has are cheap —
+    # it answers 409 and nothing is transferred twice.
+    if [ "${FULL_SYNC:-0}" -eq 1 ]; then
+        max_age=""
+        log_info "  full sync: re-offering every file, ignoring max_age_days"
+    fi
+
     _curl_base
 
     while IFS= read -r rel; do
@@ -95,7 +127,7 @@ https_send() {
         abs="$src/$rel"
         fp="$(_file_fingerprint "$abs")"
 
-        if grep -Fqx "$fp $rel" "$state" 2>/dev/null; then
+        if [ "${FULL_SYNC:-0}" -eq 0 ] && grep -Fqx "$fp $rel" "$state" 2>/dev/null; then
             unchanged=$((unchanged + 1))
             continue
         fi
@@ -154,4 +186,33 @@ https_send() {
 
     log_info "  $sent uploaded, $unchanged unchanged, $failed failed"
     [ "$failed" -eq 0 ]
+}
+
+# Tell the website a requested full sync finished, so the pending state in the
+# admin clears. Only called after a clean run: if this run failed partway, the
+# request should stay outstanding and be retried next time.
+https_finish() {
+    local failures="$1" token code
+
+    [ "$FULL_SYNC_FROM_SERVER" -eq 1 ] || return 0
+    [ "$failures" -eq 0 ] || {
+        log_warn "full sync had failures; leaving the request open so it retries"
+        return 0
+    }
+    [ "${DRY_RUN:-0}" -eq 0 ] || return 0
+
+    token="$(_https_token)"
+    _curl_base
+    code="$(curl "${CURL_ARGS[@]}" -o /dev/null -w '%{http_code}' \
+        -X POST \
+        -H "Authorization: Bearer $token" \
+        "$CFG_CLIMWEB_BASE_URL/api/product-sync/full-sync-complete/" 2>/dev/null)" || true
+    code="${code:-000}"
+
+    case "$code" in
+        200) log_info "full sync complete; the website has been told" ;;
+        # Not fatal: the files are already uploaded, which is what matters. The
+        # request simply stays pending and the next run repeats it.
+        *)   log_warn "could not confirm the full sync to the website (HTTP $code)" ;;
+    esac
 }

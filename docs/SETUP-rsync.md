@@ -173,15 +173,15 @@ in the CMS admin. New Product Item pages should appear under the product.
 
 ### 5. Let the schedule take over
 
-The installer already set up an hourly cron job. To change the frequency:
+The installer already set up a check every 10 minutes. To change the frequency:
 
 ```bash
 sudo nano /etc/cron.d/climweb-sync
 ```
 
-Match it to how often your products are actually generated — hourly for
-nowcasts, `30 6 * * *` for a daily morning bulletin. There is no benefit to
-running more often than your products change.
+A run with nothing to send takes about a tenth of a second, so checking often
+costs almost nothing and means new files appear promptly. There is little reason
+to make this less frequent.
 
 Logs go to `/var/log/climweb-sync/sync.log`.
 

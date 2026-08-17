@@ -311,20 +311,15 @@ If your organisation uses a proxy, set https_proxy before running this."
 "Run the command again once you know which folders hold the files."
     fi
 
-    # -- 3. how often ---------------------------------------------------------
-    say
-    rule
-    say_bold "  How often are new files produced?"
-    say "    1) Several times a day    (check every hour)"
-    say "    2) Once a day             (check every morning)"
-    say "    3) Once a week            (check every hour, still safe)"
-    say
-    local freq cron_spec
-    ask freq "  Choose [1]: "
-    case "${freq:-1}" in
-        2) cron_spec="30 6 * * *" ;;
-        *) cron_spec="17 * * * *" ;;
-    esac
+    # The operator is deliberately not asked how often to check.
+    #
+    # A run with nothing to send takes about a tenth of a second — it is one
+    # directory walk and one small request — so there is nothing to save by
+    # checking less often, and two things to lose: new bulletins wait longer to
+    # appear, and a "Sync all files" request from the website waits up to a full
+    # interval before anything happens. On a daily schedule that was most of a
+    # day, which made the button feel broken.
+    local cron_spec="*/10 * * * *"
 
     # -- 5. write everything --------------------------------------------------
     say

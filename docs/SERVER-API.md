@@ -54,7 +54,31 @@ Authorization: Bearer <token>
 | `401` / `403` | Token missing, invalid, or revoked |
 | `404` | This ClimWeb version has no product-sync API |
 
-Body is ignored by the client.
+Returns `full_sync_requested` (`"true"`/`"false"`), which is how the **Sync all
+files** button in the admin reaches the source server: the request cannot be
+pushed, so it is carried on the check the client already makes at the start of
+every run. Supports `?format=env`.
+
+Reading the flag must **not** clear it — see the completion endpoint below.
+
+### `POST /api/product-sync/full-sync-complete/`
+
+Acknowledges a finished full sync, clearing the pending state in the admin.
+
+```
+Authorization: Bearer <token>
+```
+
+The client calls this only after a run with no failures. Clearing on
+acknowledgement rather than on read means a run that dies partway leaves the
+request outstanding, so the next run retries it instead of dropping it.
+
+| Response | Meaning |
+|---|---|
+| `200` | Cleared, or there was nothing pending |
+| `401` | Authentication failure |
+
+A credential can only clear its own request.
 
 ### `POST /api/product-sync/upload/`
 

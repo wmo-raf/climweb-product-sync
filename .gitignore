@@ -12,3 +12,5 @@ token
 .test/
 *.log
 *.state
+
+data/

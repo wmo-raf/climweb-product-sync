@@ -2,7 +2,7 @@
 #
 # install.sh — install climweb-sync system-wide and set up a schedule.
 #
-#   sudo ./install.sh                    # install, then set up cron hourly
+#   sudo ./install.sh                    # install, then check every 10 min
 #   sudo ./install.sh --schedule systemd # use a systemd timer instead of cron
 #   sudo ./install.sh --no-schedule      # install only
 #   sudo ./install.sh --uninstall
@@ -14,7 +14,7 @@ CONFIG_DIR="/etc/climweb-sync"
 STATE_DIR="/var/lib/climweb-sync"
 LOG_DIR="/var/log/climweb-sync"
 SCHEDULE="cron"
-CRON_SPEC="${CRON_SPEC:-17 * * * *}"   # hourly, off the hour to avoid a stampede
+CRON_SPEC="${CRON_SPEC:-*/10 * * * *}"   # a no-op run costs ~0.1s, so check often
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 say()  { printf '  %s\n' "$*"; }
@@ -99,7 +99,8 @@ case "$SCHEDULE" in
     cron)
         cat > /etc/cron.d/climweb-sync <<EOF
 # climweb-sync — push met service products into ClimWeb's watch folder.
-# Adjust the schedule to match how often your products are generated.
+# Runs every 10 minutes. A run with nothing to send costs ~0.1s, so there is
+# nothing to gain by making this less frequent.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MAILTO=root

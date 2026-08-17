@@ -14,6 +14,7 @@
 #   SHIM_VALID_CODE the setup code that is accepted
 #   SHIM_FORMATS    comma-separated formats the product publishes
 #   SHIM_DOWN=1     simulate a server that cannot be reached
+#   SHIM_FULL_SYNC  "true" if the website is asking for a full re-send
 
 set -uo pipefail
 
@@ -23,6 +24,7 @@ SHIM_WATCH="${SHIM_WATCH:-/tmp/shim-watch}"
 SHIM_VALID_CODE="${SHIM_VALID_CODE:-}"
 SHIM_FORMATS="${SHIM_FORMATS:-pdf}"
 SHIM_DOWN="${SHIM_DOWN:-0}"
+SHIM_FULL_SYNC="${SHIM_FULL_SYNC:-false}"
 
 out_file=""
 url=""
@@ -117,6 +119,24 @@ if [[ "$url" == *"/ping/"* ]]; then
         emit 401 '{"error": "invalid_token"}'
         exit 0
     fi
+    emit 200 "STATUS='ok'
+PRODUCT_NAME='Weekly Rainfall'
+VARIABLE_NAME='weekly_rainfall'
+FORMATS='${SHIM_FORMATS}'
+INGESTION_ENABLED='true'
+FULL_SYNC_REQUESTED='${SHIM_FULL_SYNC}'
+"
+    exit 0
+fi
+
+# --- POST /api/product-sync/full-sync-complete/ ------------------------------
+if [[ "$url" == *"/full-sync-complete/"* ]]; then
+    if [ "$auth" != "Bearer $token" ]; then
+        emit 401 '{"error": "invalid_token"}'
+        exit 0
+    fi
+    # Record the acknowledgement so the test can assert it happened.
+    printf 'acked\n' >> "$SHIM_DIR/full_sync_acks"
     emit 200 '{"status": "ok"}'
     exit 0
 fi
