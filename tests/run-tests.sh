@@ -17,9 +17,12 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-pass=0; fail=0
+pass=0; fail=0; skipped=0
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; pass=$((pass+1)); }
 no()   { printf '  \033[31mFAIL\033[0m %s\n' "$1"; [ -n "${2:-}" ] && printf '       %s\n' "$2"; fail=$((fail+1)); }
+# Counted and printed rather than silent: a skip that nobody notices is a test
+# that has quietly stopped running.
+skip() { printf '  \033[33mskip\033[0m %s\n' "$1"; skipped=$((skipped+1)); }
 
 check() { # check DESCRIPTION EXPECTED ACTUAL
     if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "expected [$2], got [$3]"; fi
@@ -154,39 +157,62 @@ touch "$WORK/fake_key"; chmod 600 "$WORK/fake_key"
 export PATH="$WORK/bin:$PATH"
 export CLIMWEB_SYNC_STATE_DIR="$WORK/state"
 
-"$REPO/climweb-sync" -c "$WORK/config.yaml" --dry-run > "$WORK/dry.out" 2>&1
-check "dry run exits cleanly" "0" "$?"
-if [ -d "$WATCH" ]; then no "dry run transfers nothing" "watch root was created"; else ok "dry run transfers nothing"; fi
+# The rsync transport targets GNU rsync 3.x, which is what every Linux
+# distribution ships. Apple ships either rsync 2.6.9 (from 2006) or, on
+# newer releases, openrsync — neither supports the flag set used here.
+# rsync is a Linux-deployment path only, so on those systems these
+# assertions are skipped rather than reported as failures.
+rsync_is_gnu3() {
+    local banner major
+    banner="$(rsync --version 2>/dev/null | head -1)"
+    case "$banner" in
+        *openrsync*) return 1 ;;
+    esac
+    major="$(printf '%s' "$banner" | sed -n 's/^rsync  *version  *\([0-9][0-9]*\).*/\1/p')"
+    [ -n "$major" ] && [ "$major" -ge 3 ]
+}
 
-"$REPO/climweb-sync" -c "$WORK/config.yaml" -v > "$WORK/run.out" 2>&1
-rc=$?
-check "real run exits cleanly" "0" "$rc"
-[ "$rc" -ne 0 ] && sed 's/^/       | /' "$WORK/run.out"
+run_rsync_transport_tests() {
+    "$REPO/climweb-sync" -c "$WORK/config.yaml" --dry-run > "$WORK/dry.out" 2>&1
+    check "dry run exits cleanly" "0" "$?"
+    if [ -d "$WATCH" ]; then no "dry run transfers nothing" "watch root was created"; else ok "dry run transfers nothing"; fi
 
-DEST="$WATCH/weekly_rainfall/pdf"
-if [ -f "$DEST/bulletin_01-08-2026.pdf" ]; then ok "file landed in the derived path"; else no "file landed in the derived path" "$DEST is missing the file"; fi
-if [ -f "$DEST/2026/bulletin_03-08-2026.pdf" ]; then ok "subdirectory preserved for {yyyy}/ conventions"; else no "subdirectory preserved for {yyyy}/ conventions"; fi
-if [ -f "$DEST/notes.txt" ]; then no "non-matching formats excluded" "notes.txt was copied"; else ok "non-matching formats excluded"; fi
-if [ -f "$DEST/ancient.pdf" ]; then no "files older than max_age_days excluded" "ancient.pdf was copied"; else ok "files older than max_age_days excluded"; fi
+    "$REPO/climweb-sync" -c "$WORK/config.yaml" -v > "$WORK/run.out" 2>&1
+    rc=$?
+    check "real run exits cleanly" "0" "$rc"
+    [ "$rc" -ne 0 ] && sed 's/^/       | /' "$WORK/run.out"
 
-mode="$(file_mode "$DEST/bulletin_01-08-2026.pdf")"
-check "chmod applied so ClimWeb can read the file" "644" "$mode"
+    DEST="$WATCH/weekly_rainfall/pdf"
+    if [ -f "$DEST/bulletin_01-08-2026.pdf" ]; then ok "file landed in the derived path"; else no "file landed in the derived path" "$DEST is missing the file"; fi
+    if [ -f "$DEST/2026/bulletin_03-08-2026.pdf" ]; then ok "subdirectory preserved for {yyyy}/ conventions"; else no "subdirectory preserved for {yyyy}/ conventions"; fi
+    if [ -f "$DEST/notes.txt" ]; then no "non-matching formats excluded" "notes.txt was copied"; else ok "non-matching formats excluded"; fi
+    if [ -f "$DEST/ancient.pdf" ]; then no "files older than max_age_days excluded" "ancient.pdf was copied"; else ok "files older than max_age_days excluded"; fi
 
-# A second run must be a no-op, which is what makes an hourly cron job safe.
-"$REPO/climweb-sync" -c "$WORK/config.yaml" -v > "$WORK/run2.out" 2>&1
-if grep -qE '^(<f|>f)' "$WORK/run2.out"; then
-    no "second run re-transfers nothing" "$(grep -E '^(<f|>f)' "$WORK/run2.out" | head -3)"
+    mode="$(file_mode "$DEST/bulletin_01-08-2026.pdf")"
+    check "chmod applied so ClimWeb can read the file" "644" "$mode"
+
+    # A second run must be a no-op, which is what makes an hourly cron job safe.
+    "$REPO/climweb-sync" -c "$WORK/config.yaml" -v > "$WORK/run2.out" 2>&1
+    if grep -qE '^(<f|>f)' "$WORK/run2.out"; then
+        no "second run re-transfers nothing" "$(grep -E '^(<f|>f)' "$WORK/run2.out" | head -3)"
+    else
+        ok "second run re-transfers nothing"
+    fi
+
+    # --only should filter
+    "$REPO/climweb-sync" -c "$WORK/config.yaml" --only nonexistent > "$WORK/only.out" 2>&1
+    if grep -q '0 product(s) synced' "$WORK/only.out"; then ok "--only filters products"; else no "--only filters products" "$(tail -2 "$WORK/only.out")"; fi
+
+    # --check should report the plan without transferring
+    "$REPO/climweb-sync" -c "$WORK/config.yaml" --check > "$WORK/check.out" 2>/dev/null
+    if grep -q "$DEST" "$WORK/check.out"; then ok "--check prints the resolved destination"; else no "--check prints the resolved destination" "$(cat "$WORK/check.out")"; fi
+}
+
+if rsync_is_gnu3; then
+    run_rsync_transport_tests
 else
-    ok "second run re-transfers nothing"
+    skip "rsync transport — needs GNU rsync 3+, found: $(rsync --version 2>/dev/null | head -1)"
 fi
-
-# --only should filter
-"$REPO/climweb-sync" -c "$WORK/config.yaml" --only nonexistent > "$WORK/only.out" 2>&1
-if grep -q '0 product(s) synced' "$WORK/only.out"; then ok "--only filters products"; else no "--only filters products" "$(tail -2 "$WORK/only.out")"; fi
-
-# --check should report the plan without transferring
-"$REPO/climweb-sync" -c "$WORK/config.yaml" --check > "$WORK/check.out" 2>/dev/null
-if grep -q "$DEST" "$WORK/check.out"; then ok "--check prints the resolved destination"; else no "--check prints the resolved destination" "$(cat "$WORK/check.out")"; fi
 
 # -----------------------------------------------------------------------------
 echo
@@ -207,5 +233,9 @@ check "rejects a format written as .pdf" "2" "$?"
 
 # -----------------------------------------------------------------------------
 echo
-printf '%d passed, %d failed\n\n' "$pass" "$fail"
+if [ "$skipped" -gt 0 ]; then
+    printf '%d passed, %d failed, %d skipped\n\n' "$pass" "$fail" "$skipped"
+else
+    printf '%d passed, %d failed\n\n' "$pass" "$fail"
+fi
 [ "$fail" -eq 0 ]

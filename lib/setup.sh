@@ -273,7 +273,7 @@ If your organisation uses a proxy, set https_proxy before running this."
     IFS=',' read -r -a fmt_list <<< "${FORMATS:-$FORMAT}"
     for i in "${!fmt_list[@]}"; do
         raw_fmt="$(printf '%s' "${fmt_list[$i]}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-        fmt_list[$i]="$raw_fmt"
+        fmt_list[i]="$raw_fmt"
     done
 
     local -a chosen_formats=() chosen_paths=()

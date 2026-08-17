@@ -60,7 +60,7 @@ scan '\bmapfile\b|\breadarray\b' \
 scan 'declare -A|local -A' \
     "associative arrays are bash 4; macOS ships bash 3.2"
 scan '\$\{[A-Za-z_][A-Za-z0-9_]*,,\}|\$\{[A-Za-z_][A-Za-z0-9_]*\^\^\}' \
-    'case conversion ${v,,} is bash 4; use tr instead'
+    'case conversion is bash 4; use tr instead'
 
 # --- GNU-only flags ----------------------------------------------------------
 scan '\bsort -z|\bsort --zero-terminated' \
